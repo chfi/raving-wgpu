@@ -8,6 +8,10 @@ use winit::{
 
 use anyhow::Result;
 
+pub mod graph;
+
+pub use graph::*;
+
 pub async fn run() -> anyhow::Result<()> {
     env_logger::init();
     let event_loop = EventLoop::new();
