@@ -12,6 +12,8 @@ log = "0.4"
 wgpu = "0.13"
 bytemuck = { version = "1.4", features = [ "derive" ] }
 
+rustc-hash = "1.1"
+rhai = { version = "1.10.1", features = ["sync", "f32_float"]}
 
 anyhow = "1.0"
 
