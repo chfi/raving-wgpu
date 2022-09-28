@@ -39,6 +39,8 @@ pub enum SocketDir {
     Output,
 }
 
+
+
 #[derive(Clone)]
 pub struct NodeDef {
     name: String,
@@ -84,6 +86,18 @@ pub struct Node {
     outputs: Vec<Option<(NodeId, SocketIx)>>,
 }
 
+#[derive(Clone)]
+pub struct NodeDefIO<I, O> {
+    inputs: Vec<I>,
+    outputs: Vec<O>,
+}
+
+#[derive(Clone)]
+pub struct NodeInstanceIO<I, O> {
+    inputs: Vec<Option<I>>,
+    outputs: Vec<Option<O>>,
+}
+
 pub struct ImageResource {
     image: wgpu::Texture,
     view: wgpu::TextureView,
@@ -93,6 +107,7 @@ pub struct ImageResource {
     usage: wgpu::TextureUsages,
     layout: wgpu::ImageDataLayout,
 }
+
 
 pub enum Resource {
     Free {
@@ -121,6 +136,23 @@ pub struct Graph {
     nodes: Vec<Node>,
 
     outputs: FxHashSet<NodeId>,
+}
+
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(transparent)]
+pub struct ResourceId(usize);
+
+pub struct GraphContext {
+    graph: Graph,
+
+    /*
+    first initialize all nodes by creating their corresponding 
+     */
+
+    // resources: FxHashMap<NodeId, Resource>,
+    // resources: FxHashMap<ResourceId, Resource>,
+    // next_id: usize,
 }
 
 impl Graph {
@@ -272,3 +304,30 @@ impl Graph {
         Ok(())
     }
 }
+
+
+
+pub type ResourceAllocDef<T> = Arc<dyn Fn(rhai::Dynamic) -> Result<T>>;
+
+pub type ImageAllocDef = ResourceAllocDef<wgpu::TextureDescriptor<'static>>;
+pub type BufferAllocDef = ResourceAllocDef<wgpu::BufferDescriptor<'static>>;
+
+
+pub enum ResourceAllocRule {
+    Image(ImageAllocDef),
+    Buffer(BufferAllocDef),
+}
+
+
+pub enum OutputDef {
+    Passthrough { input_socket: usize, data: DataType },
+    Create { rule: ResourceAllocRule },
+}
+
+pub struct NodeDefinition {
+    name: String,
+
+    inputs: Vec<(String, DataType)>,
+    output_defs: Vec<(String, OutputDef)>,
+}
+
