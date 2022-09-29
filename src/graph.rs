@@ -7,6 +7,140 @@ use std::{
     sync::Arc,
 };
 
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(transparent)]
+pub struct NodeId(usize);
+
+pub type SocketIx = usize;
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum DataType {
+    Buffer,
+    Image,
+    // Scalar,
+}
+
+/*
+Render and compute pipelines has bind group layouts (and push constant ranges)
+associated with them, by ID, and each layout can track its "children",
+also by ID
+
+
+ */
+
+// pub
+
+pub struct BindGroupDef {
+    layout: wgpu::BindGroupLayout,
+    entries: Vec<wgpu::BindGroupLayoutEntry>,
+}
+
+pub struct GraphContext {
+    buffers: Vec<wgpu::Buffer>,
+    textures: Vec<wgpu::Texture>,
+    texture_views: Vec<wgpu::TextureView>,
+
+    render_pipelines: Vec<wgpu::RenderPipeline>,
+    compute_pipelines: Vec<wgpu::ComputePipeline>,
+
+    bind_group_layouts: Vec<BindGroupDef>,
+    // bind_group_layouts: Vec<(wgpu::BindGroupLayout, wgpu::BindGroupLayoutDescriptor<'static>)>,
+    bind_groups: Vec<wgpu::BindGroup>,
+}
+
+impl std::default::Default for GraphContext {
+    fn default() -> Self {
+        Self {
+            buffers: Vec::new(),
+            textures: Vec::new(),
+            texture_views: Vec::new(),
+
+            render_pipelines: Vec::new(),
+            compute_pipelines: Vec::new(),
+
+            bind_group_layouts: Vec::new(),
+            bind_groups: Vec::new(),
+        }
+    }
+}
+
+impl GraphContext {
+    pub fn init(state: &super::State) -> Result<Self> {
+        let mut result = Self::default();
+
+        {
+            let bg_layout_desc = wgpu::BindGroupLayoutDescriptor {
+                label: Some("test bind group layout"),
+                entries: &[BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: ShaderStages::COMPUTE,
+                    ty: BindingType::StorageTexture {
+                        access: StorageTextureAccess::WriteOnly,
+                        format: TextureFormat::Rgba8Unorm,
+                        view_dimension: TextureViewDimension::D2,
+                    },
+                    count: None,
+                }],
+            };
+            let bg_layout = state.device.create_bind_group_layout(&bg_layout_desc);
+
+            let shader_desc = wgpu::include_spirv!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/shaders/",
+                "shader.comp.spv"
+            ));
+
+            let shader_module = state.device.create_shader_module(shader_desc);
+
+            let pipeline_layout_desc = PipelineLayoutDescriptor {
+                label: Some("test pipeline layout"),
+                bind_group_layouts: &[&bg_layout],
+                push_constant_ranges: &[PushConstantRange {
+                    stages: ShaderStages::COMPUTE,
+                    range: 0..(4 * 4 + 4 + 4),
+                }],
+            };
+
+            let pipeline_layout = state.device.create_pipeline_layout(&pipeline_layout_desc);
+
+            let compute_desc = ComputePipelineDescriptor {
+                label: Some("test compute pipeline"),
+                layout: Some(&pipeline_layout),
+                module: &shader_module,
+                entry_point: "main",
+            };
+
+            let compute_pipeline = state.device.create_compute_pipeline(&compute_desc);
+
+            result.bind_group_layouts.push(BindGroupDef {
+                layout: bg_layout, 
+                entries: bg_layout_desc.entries.to_vec(),
+            });
+            result.compute_pipelines.push(compute_pipeline);
+        }
+
+        Ok(result)
+    }
+}
+
+/*
+
+
+pub struct Node {
+    // def: Arc<NodeDefinition>,
+    id: NodeId,
+
+    input_sockets: Vec<Option<(NodeId, SocketIx)>>,
+    // output_sockets: Vec<Option<
+
+    inputs: Vec<Option<(NodeId, SocketIx)>>,
+    outputs: Vec<Option<(NodeId, SocketIx)>>,
+
+}
+*/
+
+/*
+
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TextureResourceSig {
     dimensions: [u32; 2],
@@ -24,13 +158,6 @@ pub struct RenderGraph {
     buffers: FxHashMap<usize, ()>,
 
     nodes: FxHashMap<usize, ()>,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum DataType {
-    Buffer,
-    Image,
-    Scalar,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -71,13 +198,6 @@ impl NodeDef {
         }
     }
 }
-
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[repr(transparent)]
-pub struct NodeId(usize);
-
-pub type SocketIx = usize;
-
 pub struct Node {
     def: Arc<NodeDef>,
     id: NodeId,
@@ -147,7 +267,7 @@ pub struct GraphContext {
     graph: Graph,
 
     /*
-    first initialize all nodes by creating their corresponding 
+    first initialize all nodes by creating their corresponding
      */
 
     // resources: FxHashMap<NodeId, Resource>,
@@ -312,7 +432,6 @@ pub type ResourceAllocDef<T> = Arc<dyn Fn(rhai::Dynamic) -> Result<T>>;
 pub type ImageAllocDef = ResourceAllocDef<wgpu::TextureDescriptor<'static>>;
 pub type BufferAllocDef = ResourceAllocDef<wgpu::BufferDescriptor<'static>>;
 
-
 pub enum ResourceAllocRule {
     Image(ImageAllocDef),
     Buffer(BufferAllocDef),
@@ -320,7 +439,7 @@ pub enum ResourceAllocRule {
 
 
 pub enum OutputDef {
-    Passthrough { input_socket: usize, data: DataType },
+    Passthrough { input_socket: SocketIx, data: DataType },
     Create { rule: ResourceAllocRule },
 }
 
@@ -330,4 +449,4 @@ pub struct NodeDefinition {
     inputs: Vec<(String, DataType)>,
     output_defs: Vec<(String, OutputDef)>,
 }
-
+*/
