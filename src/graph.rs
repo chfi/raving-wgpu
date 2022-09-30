@@ -55,23 +55,113 @@ pub struct NodeOutputDef {
     allocate: Option<Arc<dyn Fn(rhai::Map) -> Result<NodeOutputDescriptor>>>,
 }
 
+pub type InputName = rhai::ImmutableString;
+pub type OutputName = rhai::ImmutableString;
+pub type CtxInputName = rhai::ImmutableString;
+
 pub struct Node {
     id: NodeId,
 
-    output_defs: Vec<NodeOutputDef>,
+    input_defs: Vec<(InputName, DataType)>,
+    inputs: HashMap<InputName, NodeOutput>,
 
-    outputs: HashMap<rhai::ImmutableString, NodeOutput>,
+    output_defs: Vec<NodeOutputDef>,
+    outputs: HashMap<OutputName, NodeOutput>,
+
+    // encodes the edges
+    input_socket_links: HashMap<InputName, (NodeId, OutputName)>,
+    output_socket_links: HashMap<OutputName, (NodeId, InputName)>,
 
     // map from input names to sets of affected outputs,
     // outputs identified by name in the `outputs` map
-    context_inputs: HashMap<rhai::ImmutableString, Vec<rhai::ImmutableString>>,
+    context_inputs: HashMap<CtxInputName, Vec<OutputName>>,
     // inputs: HashMap<rhai::ImmutableString,
+}
+
+// TODO: only supports a single bind group for now
+pub struct ComputeNode {
+    node: Node,
+
+    pipeline: usize, // index into graph context's compute_pipeline vec
+    bind_group_layout: usize, // index in graph ctx `bind_group_layouts` vec
+
+    bind_group: Option<usize>, // index in graph ctx `bind_group` vec
+
+    // map from input sockets (and their contents) to bind group binding indices
+    bind_group_map: Vec<(InputName, usize)>,
+}
+
+impl ComputeNode {
+    fn create_bind_group(&self, ctx: &GraphContext) -> Result<wgpu::BindGroup> {
+        let def = &ctx.bind_group_layouts[self.bind_group_layout];
+
+        let mut entries = Vec::new();
+
+        for (entry, (input, binding)) in
+            std::iter::zip(&def.entries, &self.bind_group_map)
+        {
+            // get the input value from the node input
+            // if it doesn't exist, return an error
+
+            match entry.ty {
+                // NB: in the future the fields may be useful
+                BindingType::StorageTexture { .. } => {
+                    let in_val = self
+                        .node
+                        .inputs
+                        .get(input)
+                        .and_then(|output| {
+                            if let NodeOutput::Texture { texture } = output {
+                                Some(texture)
+                            } else {
+                                None
+                            }
+                        })
+                        .ok_or(anyhow::anyhow!(
+                            "node input missing! {}",
+                            input
+                        ))?;
+
+                    let texture = &ctx.textures[in_val.0];
+
+                    let resource = wgpu::BindingResource::TextureView(&texture.view);
+
+                    let entry = wgpu::BindGroupEntry {
+                        binding: *binding as u32,
+                        resource,
+                    };
+
+                    entries.push(entry);
+                }
+                _ => anyhow::bail!("Only StorageTexture is supported"), /*
+                                                                        BindingType::Buffer { ty, has_dynamic_offset, min_binding_size } => todo!(),
+                                                                        BindingType::Sampler(_) => todo!(),
+                                                                        BindingType::Texture { sample_type, view_dimension, multisampled } => todo!(),
+                                                                        */
+            }
+        }
+
+        let desc = wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &def.layout,
+            entries: entries.as_slice(),
+        };
+
+        /*
+        let entries = vec![
+            wgpu::BindGroupEntry
+        ];
+        */
+
+        /*
+         */
+
+        todo!();
+    }
 }
 
 impl Node {
     pub fn node_create_image(id: NodeId) -> Result<Self> {
-        
-
         // let output_name = format!("create_image_output_{}", id.0);
 
         let alloc = move |ctx_input: rhai::Map| {
@@ -98,25 +188,39 @@ impl Node {
                 usage: Usages::TEXTURE_BINDING | Usages::COPY_SRC,
             };
 
-            let desc = NodeOutputDescriptor::Texture { desc: texture_desc, data: None };
+            let desc = NodeOutputDescriptor::Texture {
+                desc: texture_desc,
+                data: None,
+            };
 
             Ok(desc)
         };
 
-        let allocate = Arc::new(alloc) as Arc<dyn Fn(rhai::Map) -> Result<NodeOutputDescriptor>>;
+        let allocate = Arc::new(alloc)
+            as Arc<dyn Fn(rhai::Map) -> Result<NodeOutputDescriptor>>;
 
         let output_def = NodeOutputDef {
             name: "output".into(),
             allocate: Some(allocate),
         };
 
-        let mut result = Node { id, 
+        let mut result = Node {
+            id,
+
+            input_defs: Vec::new(),
+            inputs: HashMap::default(),
+
+            input_socket_links: HashMap::default(),
+            output_socket_links: HashMap::default(),
+
             output_defs: vec![output_def],
             outputs: HashMap::default(),
             context_inputs: HashMap::default(),
         };
 
-        result.context_inputs.insert("dims".into(), vec!["output".into()]);
+        result
+            .context_inputs
+            .insert("dims".into(), vec!["output".into()]);
 
         Ok(result)
     }
@@ -139,8 +243,10 @@ pub struct BindGroupDef {
 
 pub struct GraphContext {
     buffers: Vec<wgpu::Buffer>,
-    textures: Vec<wgpu::Texture>,
-    texture_views: Vec<wgpu::TextureView>,
+
+    textures: Vec<crate::texture::Texture>,
+    // textures: Vec<wgpu::Texture>,
+    // texture_views: Vec<wgpu::TextureView>,
 
     render_pipelines: Vec<wgpu::RenderPipeline>,
     compute_pipelines: Vec<wgpu::ComputePipeline>,
@@ -155,7 +261,7 @@ impl std::default::Default for GraphContext {
         Self {
             buffers: Vec::new(),
             textures: Vec::new(),
-            texture_views: Vec::new(),
+            // texture_views: Vec::new(),
 
             render_pipelines: Vec::new(),
             compute_pipelines: Vec::new(),
@@ -184,7 +290,8 @@ impl GraphContext {
                     count: None,
                 }],
             };
-            let bg_layout = state.device.create_bind_group_layout(&bg_layout_desc);
+            let bg_layout =
+                state.device.create_bind_group_layout(&bg_layout_desc);
 
             let shader_desc = wgpu::include_spirv!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
@@ -203,7 +310,8 @@ impl GraphContext {
                 }],
             };
 
-            let pipeline_layout = state.device.create_pipeline_layout(&pipeline_layout_desc);
+            let pipeline_layout =
+                state.device.create_pipeline_layout(&pipeline_layout_desc);
 
             let compute_desc = ComputePipelineDescriptor {
                 label: Some("test compute pipeline"),
@@ -212,7 +320,8 @@ impl GraphContext {
                 entry_point: "main",
             };
 
-            let compute_pipeline = state.device.create_compute_pipeline(&compute_desc);
+            let compute_pipeline =
+                state.device.create_compute_pipeline(&compute_desc);
 
             result.bind_group_layouts.push(BindGroupDef {
                 layout: bg_layout,
