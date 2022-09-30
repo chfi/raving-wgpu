@@ -20,6 +20,108 @@ pub enum DataType {
     // Scalar,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(transparent)]
+pub struct TextureId(usize);
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(transparent)]
+pub struct TextureViewId(usize);
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(transparent)]
+pub struct BufferId(usize);
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub enum NodeOutputDescriptor {
+    Texture {
+        desc: wgpu::TextureDescriptor<'static>,
+        data: Option<Vec<u8>>,
+    },
+    Buffer {
+        desc: wgpu::BufferDescriptor<'static>,
+        data: Option<Vec<u8>>,
+    },
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum NodeOutput {
+    Texture { texture: TextureId },
+    Buffer { buffer: BufferId },
+}
+
+pub struct NodeOutputDef {
+    name: rhai::ImmutableString,
+    allocate: Option<Arc<dyn Fn(rhai::Map) -> Result<NodeOutputDescriptor>>>,
+}
+
+pub struct Node {
+    id: NodeId,
+
+    output_defs: Vec<NodeOutputDef>,
+
+    outputs: HashMap<rhai::ImmutableString, NodeOutput>,
+
+    // map from input names to sets of affected outputs,
+    // outputs identified by name in the `outputs` map
+    context_inputs: HashMap<rhai::ImmutableString, Vec<rhai::ImmutableString>>,
+    // inputs: HashMap<rhai::ImmutableString,
+}
+
+impl Node {
+    pub fn node_create_image(id: NodeId) -> Result<Self> {
+        
+
+        // let output_name = format!("create_image_output_{}", id.0);
+
+        let alloc = move |ctx_input: rhai::Map| {
+            let dims = ctx_input.get("dims").expect("context input missing");
+            let dims = dims.clone_cast::<rhai::Map>();
+            let width = dims.get("width").unwrap().as_int().unwrap();
+            let height = dims.get("height").unwrap().as_int().unwrap();
+
+            let size = wgpu::Extent3d {
+                width: width as u32,
+                height: height as u32,
+                depth_or_array_layers: 1,
+            };
+
+            use wgpu::TextureUsages as Usages;
+
+            let texture_desc = wgpu::TextureDescriptor {
+                label: None, // Some(&name),
+                size: size,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: Usages::TEXTURE_BINDING | Usages::COPY_SRC,
+            };
+
+            let desc = NodeOutputDescriptor::Texture { desc: texture_desc, data: None };
+
+            Ok(desc)
+        };
+
+        let allocate = Arc::new(alloc) as Arc<dyn Fn(rhai::Map) -> Result<NodeOutputDescriptor>>;
+
+        let output_def = NodeOutputDef {
+            name: "output".into(),
+            allocate: Some(allocate),
+        };
+
+        let mut result = Node { id, 
+            output_defs: vec![output_def],
+            outputs: HashMap::default(),
+            context_inputs: HashMap::default(),
+        };
+
+        result.context_inputs.insert("dims".into(), vec!["output".into()]);
+
+        Ok(result)
+    }
+}
+
 /*
 Render and compute pipelines has bind group layouts (and push constant ranges)
 associated with them, by ID, and each layout can track its "children",
@@ -113,7 +215,7 @@ impl GraphContext {
             let compute_pipeline = state.device.create_compute_pipeline(&compute_desc);
 
             result.bind_group_layouts.push(BindGroupDef {
-                layout: bg_layout, 
+                layout: bg_layout,
                 entries: bg_layout_desc.entries.to_vec(),
             });
             result.compute_pipelines.push(compute_pipeline);
