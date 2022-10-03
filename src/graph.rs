@@ -92,6 +92,32 @@ pub struct ComputeNode {
 }
 
 impl ComputeNode {
+    fn execute(
+        &self,
+        ctx: &GraphContext,
+        x_groups: u32,
+        y_groups: u32,
+        z_groups: u32,
+        cmd: &mut CommandEncoder,
+    ) -> Result<()> {
+        if let Some(group_ix) = self.bind_group {
+            let pipeline = &ctx.compute_pipelines[self.pipeline];
+            let bind_group = &ctx.bind_groups[group_ix];
+            {
+                let mut pass = cmd
+                    .begin_compute_pass(&ComputePassDescriptor { label: None });
+
+                pass.set_pipeline(pipeline);
+                pass.set_bind_group(0, bind_group, &[]);
+                pass.dispatch_workgroups(x_groups, y_groups, z_groups);
+            }
+        } else {
+            anyhow::bail!("Can't execute compute node without bind group")
+        }
+
+        Ok(())
+    }
+
     fn create_bind_group(&self, ctx: &GraphContext) -> Result<wgpu::BindGroup> {
         let def = &ctx.bind_group_layouts[self.bind_group_layout];
 
@@ -124,7 +150,8 @@ impl ComputeNode {
 
                     let texture = &ctx.textures[in_val.0];
 
-                    let resource = wgpu::BindingResource::TextureView(&texture.view);
+                    let resource =
+                        wgpu::BindingResource::TextureView(&texture.view);
 
                     let entry = wgpu::BindGroupEntry {
                         binding: *binding as u32,
@@ -247,7 +274,6 @@ pub struct GraphContext {
     textures: Vec<crate::texture::Texture>,
     // textures: Vec<wgpu::Texture>,
     // texture_views: Vec<wgpu::TextureView>,
-
     render_pipelines: Vec<wgpu::RenderPipeline>,
     compute_pipelines: Vec<wgpu::ComputePipeline>,
 
@@ -262,7 +288,6 @@ impl std::default::Default for GraphContext {
             buffers: Vec::new(),
             textures: Vec::new(),
             // texture_views: Vec::new(),
-
             render_pipelines: Vec::new(),
             compute_pipelines: Vec::new(),
 
