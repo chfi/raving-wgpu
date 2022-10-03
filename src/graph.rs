@@ -78,6 +78,12 @@ pub struct Node {
     // inputs: HashMap<rhai::ImmutableString,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ComputeNodeDef {
+    pipeline: usize,
+    bind_group_layout: usize,
+}
+
 // TODO: only supports a single bind group for now
 pub struct ComputeNode {
     node: Node,
@@ -280,6 +286,8 @@ pub struct GraphContext {
     bind_group_layouts: Vec<BindGroupDef>,
     // bind_group_layouts: Vec<(wgpu::BindGroupLayout, wgpu::BindGroupLayoutDescriptor<'static>)>,
     bind_groups: Vec<wgpu::BindGroup>,
+
+    compute_node_defs: Vec<ComputeNodeDef>,
 }
 
 impl std::default::Default for GraphContext {
@@ -293,11 +301,104 @@ impl std::default::Default for GraphContext {
 
             bind_group_layouts: Vec::new(),
             bind_groups: Vec::new(),
+
+            compute_node_defs: Vec::new(),
         }
     }
 }
 
+pub fn test_graph_context(state: &super::State) -> Result<GraphContext> {
+    let mut ctx = GraphContext::default();
+
+    // load a compute shader and create a node definition for it
+    let compute_node = ctx.create_compute_node_def(
+        state,
+        include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/shaders/shader.comp.spv"
+        )),
+        "main",
+        &[BindGroupLayoutEntry {
+            binding: 0,
+            visibility: ShaderStages::COMPUTE,
+            ty: BindingType::StorageTexture {
+                access: StorageTextureAccess::WriteOnly,
+                format: TextureFormat::Rgba8Unorm,
+                view_dimension: TextureViewDimension::D2,
+            },
+            count: None,
+        }],
+        &[PushConstantRange {
+            stages: ShaderStages::COMPUTE,
+            range: 0..(4 * 4 + 4 + 4),
+        }],
+    )?;
+
+    Ok(ctx)
+}
+
 impl GraphContext {
+    /// Returns the index into `self.compute_node_defs` for the new def
+    pub fn create_compute_node_def(
+        &mut self,
+        state: &super::State,
+        shader_code: &[u8],
+        entry_point: &str,
+        bind_group_entries: &[BindGroupLayoutEntry],
+        push_constant_ranges: &[PushConstantRange],
+    ) -> Result<usize> {
+        let bind_group_layout =
+            state
+                .device
+                .create_bind_group_layout(&BindGroupLayoutDescriptor {
+                    label: None,
+                    entries: bind_group_entries,
+                });
+
+        let shader_desc = ShaderModuleDescriptor {
+            label: None,
+            source: wgpu::util::make_spirv(shader_code),
+        };
+
+        let shader_module = state.device.create_shader_module(shader_desc);
+
+        let pipeline_layout_desc = PipelineLayoutDescriptor {
+            label: None,
+            bind_group_layouts: &[&bind_group_layout],
+            push_constant_ranges,
+        };
+
+        let pipeline_layout =
+            state.device.create_pipeline_layout(&pipeline_layout_desc);
+
+        let compute_desc = ComputePipelineDescriptor {
+            label: None,
+            layout: Some(&pipeline_layout),
+            module: &shader_module,
+            entry_point,
+        };
+
+        let compute_pipeline =
+            state.device.create_compute_pipeline(&compute_desc);
+
+        let bind_group_layout_ix = self.bind_group_layouts.len();
+        let pipeline_ix = self.compute_pipelines.len();
+
+        self.bind_group_layouts.push(BindGroupDef {
+            layout: bind_group_layout,
+            entries: bind_group_entries.to_vec(),
+        });
+        self.compute_pipelines.push(compute_pipeline);
+
+        let compute_def_ix = self.compute_node_defs.len();
+        self.compute_node_defs.push(ComputeNodeDef {
+            pipeline: pipeline_ix,
+            bind_group_layout: bind_group_layout_ix,
+        });
+
+        Ok(compute_def_ix)
+    }
+
     pub fn init(state: &super::State) -> Result<Self> {
         let mut result = Self::default();
 
