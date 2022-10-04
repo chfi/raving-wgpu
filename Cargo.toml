@@ -9,7 +9,10 @@ edition = "2021"
 winit = "0.26.0"
 env_logger = "0.9"
 log = "0.4"
+
 wgpu = { version = "0.13", features = ["spirv"] }
+naga = { version = "0.9", features = ["spv-in", "glsl-in", "spv-out"] }
+
 bytemuck = { version = "1.4", features = [ "derive" ] }
 
 image = "0.24"
@@ -27,3 +30,7 @@ pollster = "0.2"
 [[example]]
 name = "triangle"
 path = "examples/triangle.rs"
+
+[[example]]
+name = "shader_reflect"
+path = "examples/shader_reflect.rs"
