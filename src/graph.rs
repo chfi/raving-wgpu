@@ -80,16 +80,16 @@ pub struct Node {
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ComputeNodeDef {
-    pipeline: usize,
-    bind_group_layout: usize,
+    pipeline: usize, // index into graph context's compute_pipeline vec
+    bind_group_layout: usize, // index in graph ctx `bind_group_layouts` vec
+    push_constant_size: u32,
 }
 
 // TODO: only supports a single bind group for now
 pub struct ComputeNode {
     node: Node,
 
-    pipeline: usize, // index into graph context's compute_pipeline vec
-    bind_group_layout: usize, // index in graph ctx `bind_group_layouts` vec
+    compute_def: ComputeNodeDef,
 
     bind_group: Option<usize>, // index in graph ctx `bind_group` vec
 
@@ -101,20 +101,33 @@ impl ComputeNode {
     fn execute(
         &self,
         ctx: &GraphContext,
+        push_constants: &[u8],
         x_groups: u32,
         y_groups: u32,
         z_groups: u32,
         cmd: &mut CommandEncoder,
     ) -> Result<()> {
+        let def = self.compute_def;
+
+        if push_constants.len() != def.push_constant_size as usize{
+            anyhow::bail!(
+                "Compute push constant was {} bytes, but expected {} bytes",
+                push_constants.len(),
+                def.push_constant_size
+            );
+        }
+
         if let Some(group_ix) = self.bind_group {
-            let pipeline = &ctx.compute_pipelines[self.pipeline];
+            let pipeline = &ctx.compute_pipelines[def.pipeline];
             let bind_group = &ctx.bind_groups[group_ix];
+
             {
                 let mut pass = cmd
                     .begin_compute_pass(&ComputePassDescriptor { label: None });
 
                 pass.set_pipeline(pipeline);
                 pass.set_bind_group(0, bind_group, &[]);
+                pass.set_push_constants(0, push_constants);
                 pass.dispatch_workgroups(x_groups, y_groups, z_groups);
             }
         } else {
@@ -125,7 +138,7 @@ impl ComputeNode {
     }
 
     fn create_bind_group(&self, ctx: &GraphContext) -> Result<wgpu::BindGroup> {
-        let def = &ctx.bind_group_layouts[self.bind_group_layout];
+        let def = &ctx.bind_group_layouts[self.compute_def.bind_group_layout];
 
         let mut entries = Vec::new();
 
@@ -310,6 +323,8 @@ impl std::default::Default for GraphContext {
 pub fn test_graph_context(state: &super::State) -> Result<GraphContext> {
     let mut ctx = GraphContext::default();
 
+    let push_constant_size = 16 + 4 + 4;
+
     // load a compute shader and create a node definition for it
     let compute_node = ctx.create_compute_node_def(
         state,
@@ -328,10 +343,11 @@ pub fn test_graph_context(state: &super::State) -> Result<GraphContext> {
             },
             count: None,
         }],
-        &[PushConstantRange {
+        //
+        PushConstantRange {
             stages: ShaderStages::COMPUTE,
-            range: 0..(4 * 4 + 4 + 4),
-        }],
+            range: 0..push_constant_size,
+        },
     )?;
 
     Ok(ctx)
@@ -345,7 +361,7 @@ impl GraphContext {
         shader_code: &[u8],
         entry_point: &str,
         bind_group_entries: &[BindGroupLayoutEntry],
-        push_constant_ranges: &[PushConstantRange],
+        push_constant_range: PushConstantRange,
     ) -> Result<usize> {
         let bind_group_layout =
             state
@@ -362,10 +378,12 @@ impl GraphContext {
 
         let shader_module = state.device.create_shader_module(shader_desc);
 
+        let push_constant_size = push_constant_range.range.end;
+
         let pipeline_layout_desc = PipelineLayoutDescriptor {
             label: None,
             bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges,
+            push_constant_ranges: &[push_constant_range],
         };
 
         let pipeline_layout =
@@ -394,6 +412,7 @@ impl GraphContext {
         self.compute_node_defs.push(ComputeNodeDef {
             pipeline: pipeline_ix,
             bind_group_layout: bind_group_layout_ix,
+            push_constant_size,
         });
 
         Ok(compute_def_ix)
