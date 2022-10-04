@@ -14,6 +14,102 @@ pub mod texture;
 
 pub use graph::*;
 
+#[derive(Debug, Clone)]
+pub struct PushConstantEntry {
+    pub kind: naga::ScalarKind,
+    pub len: usize,
+    pub range: std::ops::Range<u32>,
+}
+
+impl PushConstantEntry {
+    pub fn size(&self) -> u32 {
+        self.range.end - self.range.start
+    }
+
+    pub fn index_range(&self) -> std::ops::Range<usize> {
+        (self.range.start as usize)..(self.range.end as usize)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PushConstants {
+    buffer: Vec<u8>,
+    pub stages: naga::ShaderStage,
+    fields: Vec<(String, PushConstantEntry)>,
+}
+
+impl PushConstants {
+    // pub fn write_field_float(
+    //     &mut self,
+    //     field_name: &str,
+    //     data: &[f32],
+    // ) -> Option<()> {
+    //     todo!();
+    // }
+
+    pub fn write_field_bytes(
+        &mut self,
+        field_name: &str,
+        data: &[u8],
+    ) -> Option<()> {
+        let field_ix = self.fields.iter().position(|(n, _)| n == field_name)?;
+        let (_, entry) = &self.fields[field_ix];
+
+        let size = entry.size();
+
+        assert!(data.len() == size as usize);
+
+        self.buffer[entry.index_range()].copy_from_slice(data);
+
+        None
+    }
+
+    pub fn from_naga_struct(
+        module: &naga::Module,
+        s: &naga::TypeInner,
+        stages: naga::ShaderStage,
+    ) -> Result<Self> {
+        if let naga::TypeInner::Struct { members, span } = s {
+            let mut buffer = Vec::new();
+
+            let mut fields = Vec::new();
+
+            for mem in members {
+                if let Some(name) = &mem.name {
+                    let offset = mem.offset;
+
+                    let ty = &module.types[mem.ty];
+
+                    let size = ty.inner.size(&module.constants);
+
+                    let kind = ty.inner.scalar_kind().unwrap();
+                    // only supporting 32 bit values for now
+                    let len = size as usize / 4;
+
+                    let range = offset..(offset + size);
+
+                    for _ in range.clone() {
+                        buffer.push(0u8);
+                    }
+
+                    fields.push((
+                        name.clone(),
+                        PushConstantEntry { kind, len, range },
+                    ));
+                }
+            }
+
+            Ok(PushConstants {
+                buffer,
+                stages,
+                fields,
+            })
+        } else {
+            anyhow::bail!("Expected `TypeInner::Struct`, was: {:?}", s);
+        }
+    }
+}
+
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 struct Vertex {
@@ -43,7 +139,8 @@ impl Vertex {
     }
 }
 
-pub async fn initialize() -> anyhow::Result<(winit::event_loop::EventLoop<()>, Window, State)> {
+pub async fn initialize(
+) -> anyhow::Result<(winit::event_loop::EventLoop<()>, Window, State)> {
     let event_loop = EventLoop::new();
     let window = WindowBuilder::new().build(&event_loop).unwrap();
 
@@ -58,7 +155,6 @@ pub async fn run() -> anyhow::Result<()> {
     let window = WindowBuilder::new().build(&event_loop).unwrap();
 
     let mut state = State::new(&window).await?;
-
 
     Ok(())
 }
@@ -119,7 +215,6 @@ impl State {
             config,
             size,
         })
-
     }
 
     pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
