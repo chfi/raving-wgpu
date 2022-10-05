@@ -20,6 +20,30 @@ pub enum DataType {
     // Scalar,
 }
 
+pub enum Resource {
+    Buffer {
+        buffer: Option<wgpu::Buffer>,
+        size: Option<usize>,
+        usage: BufferUsages,
+    },
+    Texture {
+        texture: Option<crate::texture::Texture>,
+        size: Option<[u32; 2]>,
+        format: Option<TextureFormat>,
+        usage: TextureUsages,
+    },
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(transparent)]
+pub struct ResourceId(usize);
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ResourceHandle {
+    id: ResourceId,
+    time: u64,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct TextureId(usize);
@@ -109,7 +133,7 @@ impl ComputeNode {
     ) -> Result<()> {
         let def = self.compute_def;
 
-        if push_constants.len() != def.push_constant_size as usize{
+        if push_constants.len() != def.push_constant_size as usize {
             anyhow::bail!(
                 "Compute push constant was {} bytes, but expected {} bytes",
                 push_constants.len(),
@@ -288,6 +312,8 @@ pub struct BindGroupDef {
 }
 
 pub struct GraphContext {
+    resources: Vec<Resource>,
+
     buffers: Vec<wgpu::Buffer>,
 
     textures: Vec<crate::texture::Texture>,
@@ -306,6 +332,8 @@ pub struct GraphContext {
 impl std::default::Default for GraphContext {
     fn default() -> Self {
         Self {
+            resources: Vec::new(),
+
             buffers: Vec::new(),
             textures: Vec::new(),
             // texture_views: Vec::new(),
@@ -354,6 +382,104 @@ pub fn test_graph_context(state: &super::State) -> Result<GraphContext> {
 }
 
 impl GraphContext {
+    fn allocate_resource(
+        state: &super::State,
+        res: &mut Resource,
+    ) -> Result<()> {
+        match res {
+            Resource::Buffer {
+                buffer,
+                size,
+                usage,
+            } => {
+                if buffer.is_some() {
+                    // allocation already exists
+                    return Ok(());
+                }
+                if size.is_none() {
+                    anyhow::bail!("Can't allocate buffer without size")
+                }
+
+                let new_buffer =
+                    state.device.create_buffer(&BufferDescriptor {
+                        label: None,
+                        size: size.unwrap() as u64,
+                        usage: *usage,
+                        mapped_at_creation: false,
+                    });
+
+                *buffer = Some(new_buffer);
+            }
+            Resource::Texture {
+                texture,
+                size,
+                format,
+                usage,
+            } => {
+                if texture.is_some() {
+                    // allocation already exists
+                    return Ok(());
+                }
+                if size.is_none() || format.is_none() {
+                    anyhow::bail!(
+                        "Can't allocate image without known size and format"
+                    )
+                }
+
+                let [width, height] = size.unwrap();
+                let format = format.unwrap();
+
+                let new_texture = crate::texture::Texture::new(
+                    &state.device,
+                    &state.queue,
+                    width as usize,
+                    height as usize,
+                    format,
+                    *usage,
+                    None,
+                )?;
+
+                *texture = Some(new_texture);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn prepare_buffer(
+        &mut self,
+        size: Option<usize>,
+        usage: Option<BufferUsages>,
+    ) -> ResourceId {
+        let res = Resource::Buffer {
+            buffer: None,
+            size,
+            usage: usage.unwrap_or(BufferUsages::empty()),
+        };
+
+        let id = ResourceId(self.resources.len());
+        self.resources.push(res);
+        id
+    }
+
+    fn prepare_image(
+        &mut self,
+        size: Option<[u32; 2]>,
+        format: Option<TextureFormat>,
+        usage: Option<TextureUsages>,
+    ) -> ResourceId {
+        let res = Resource::Texture {
+            texture: None,
+            size,
+            format,
+            usage: usage.unwrap_or(TextureUsages::empty()),
+        };
+
+        let id = ResourceId(self.resources.len());
+        self.resources.push(res);
+        id
+    }
+
     /// Returns the index into `self.compute_node_defs` for the new def
     pub fn create_compute_node_def(
         &mut self,
