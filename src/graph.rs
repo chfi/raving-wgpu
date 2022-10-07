@@ -71,7 +71,7 @@ pub enum OutputSource {
 
 #[derive(Clone)]
 pub struct OutputSocket {
-    name: OutputName,
+    // name: OutputName,
     ty: DataType,
     link: Option<(NodeId, InputName)>,
 
@@ -81,11 +81,119 @@ pub struct OutputSocket {
 
 #[derive(Clone)]
 pub struct InputSocket {
-    name: InputName,
+    // name: InputName,
     ty: DataType,
     link: Option<(NodeId, OutputName)>,
 
     resource: Option<ResourceHandle>,
+}
+
+#[derive(Clone)]
+pub struct Node_<T> {
+    id: NodeId,
+    inputs: HashMap<InputName, InputSocket>,
+    outputs: HashMap<OutputName, OutputSocket>,
+
+    is_prepared: bool,
+    is_ready: bool,
+    data: T,
+}
+
+pub struct Graph<T> {
+    nodes: Vec<Node_<T>>,
+
+    resources: Vec<Resource>,
+
+    compute_pipelines: Vec<wgpu::ComputePipeline>,
+    bind_group_layouts: Vec<BindGroupDef>,
+    bind_groups: Vec<wgpu::BindGroup>,
+}
+
+impl<T> Graph<T> {
+    pub fn add_node(&mut self, data: T) -> NodeId {
+        let id = NodeId(self.nodes.len());
+        let node = Node_ {
+            id,
+
+            inputs: HashMap::default(),
+            outputs: HashMap::default(),
+
+            is_prepared: false,
+            is_ready: false,
+            data,
+        };
+
+        self.nodes.push(node);
+        id
+    }
+
+    pub fn link_nodes(
+        &mut self,
+        from: NodeId,
+        from_output: &str,
+        to: NodeId,
+        to_input: &str,
+    ) -> Result<()> {
+        let output_ty = self
+            .nodes
+            .get(from.0)
+            .and_then(|n| {
+                let s = n.outputs.get(from_output)?;
+                Some(s.ty)
+            })
+            .ok_or_else(|| {
+                anyhow!(
+                    "Node `{}` does not have output `{}`",
+                    from.0,
+                    from_output,
+                )
+            })?;
+
+        let input_ty = self
+            .nodes
+            .get(to.0)
+            .and_then(|n| {
+                let s = n.outputs.get(to_input)?;
+                Some(s.ty)
+            })
+            .ok_or_else(|| {
+                anyhow!("Node `{}` does not have input `{}`", to.0, to_input)
+            })?;
+
+        if output_ty != input_ty {
+            anyhow::bail!(
+                "Output socket {}.{} doesn't match type of input socket {}.{}",
+                from.0,
+                from_output,
+                to.0,
+                to_input
+            );
+        }
+
+        {
+            let socket =
+                self.nodes[from.0].outputs.get_mut(from_output).unwrap();
+
+            if socket.link.is_some() {
+                anyhow::bail!("Output socket {}.{} already in use", from.0, from_output);
+            }
+
+            socket.link = Some((to, to_input.into()));
+        }
+
+        {
+            let socket =
+                self.nodes[to.0].outputs.get_mut(to_input).unwrap();
+
+            if socket.link.is_some() {
+                anyhow::bail!("Input socket {}.{} already in use", to.0, to_input);
+            }
+
+            socket.link = Some((from, from_output.into()));
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
