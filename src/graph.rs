@@ -50,11 +50,43 @@ pub struct TextureId(usize);
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
-pub struct TextureViewId(usize);
-
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[repr(transparent)]
 pub struct BufferId(usize);
+
+/*
+pub struct NodeContext<'a> {
+    id: NodeId,
+    // inputs:
+}
+*/
+
+#[derive(Clone)]
+pub enum OutputSource {
+    InputPassthrough {
+        input: InputName,
+    },
+    Allocate {
+        allocate: Arc<dyn Fn(&GraphContext, NodeId) -> Result<Resource>>,
+    },
+}
+
+#[derive(Clone)]
+pub struct OutputSocket {
+    name: OutputName,
+    ty: DataType,
+    link: Option<(NodeId, InputName)>,
+
+    source: OutputSource,
+    resource: Option<ResourceHandle>,
+}
+
+#[derive(Clone)]
+pub struct InputSocket {
+    name: InputName,
+    ty: DataType,
+    link: Option<(NodeId, OutputName)>,
+
+    resource: Option<ResourceHandle>,
+}
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub enum NodeOutputDescriptor {
@@ -329,6 +361,20 @@ pub struct GraphContext {
     compute_node_defs: Vec<ComputeNodeDef>,
 }
 
+impl std::ops::Index<ResourceId> for GraphContext {
+    type Output = Resource;
+
+    fn index(&self, index: ResourceId) -> &Self::Output {
+        &self.resources[index.0]
+    }
+}
+
+impl std::ops::IndexMut<ResourceId> for GraphContext {
+    fn index_mut(&mut self, index: ResourceId) -> &mut Self::Output {
+        &mut self.resources[index.0]
+    }
+}
+
 impl std::default::Default for GraphContext {
     fn default() -> Self {
         Self {
@@ -382,6 +428,30 @@ pub fn test_graph_context(state: &super::State) -> Result<GraphContext> {
 }
 
 impl GraphContext {
+    pub fn dfs_postorder_input(&self, from: NodeId) -> Vec<NodeId> {
+        let mut stack: VecDeque<NodeId> = VecDeque::new();
+
+        let mut visited: FxHashSet<NodeId> = FxHashSet::default();
+
+        while let Some(current) = stack.pop_back() {
+
+            // let node = self.
+        }
+
+        todo!();
+    }
+
+    fn is_allocated(&self, res: ResourceId) -> bool {
+        if let Some(res) = self.resources.get(res.0) {
+            match res {
+                Resource::Buffer { buffer, .. } => buffer.is_some(),
+                Resource::Texture { texture, .. } => texture.is_some(),
+            }
+        } else {
+            false
+        }
+    }
+
     fn allocate_resource(
         state: &super::State,
         res: &mut Resource,
