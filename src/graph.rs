@@ -127,6 +127,77 @@ impl<T> Graph<T> {
         id
     }
 
+    /// returns an ordering of the nodes the `terminus` node depends on,
+    /// that can be used to initialize and execute the graph so that
+    /// `terminus` can be evaluated
+    pub fn resolution_order(&self, terminus: NodeId) -> Vec<NodeId> {
+        let mut output = Vec::new();
+
+        #[derive(Clone, Copy, PartialEq, Eq)]
+        enum Stage {
+            Visit(NodeId),
+            Emit(NodeId),
+        }
+
+        let mut stack = VecDeque::new();
+
+        // let mut tmp: FxHashSet<NodeId> = FxHashSet::default();
+        let mut visited: FxHashSet<NodeId> = FxHashSet::default();
+
+        stack.push_back(Stage::Visit(terminus));
+
+        while let Some(stage) = stack.pop_back() {
+            match stage {
+                Stage::Visit(current) => {
+                    if visited.contains(&current) {
+                        continue;
+                    }
+
+                    visited.insert(current);
+
+                    stack.push_back(Stage::Emit(current));
+
+                    for (other, other_out, this_in) in
+                        self.node_inputs_iter(current)
+                    {
+                        stack.push_back(Stage::Visit(other));
+                    }
+                }
+                Stage::Emit(current) => {
+                    output.push(current);
+                }
+            }
+        }
+
+        output
+    }
+
+    pub fn node_inputs_iter<'a>(
+        &'a self,
+        id: NodeId,
+    ) -> impl Iterator<Item = (NodeId, &'a OutputName, &'a InputName)> {
+        let node = &self.nodes[id.0];
+
+        node.inputs.iter().filter_map(|(self_input, input_socket)| {
+            let (from, from_output) = input_socket.link.as_ref()?;
+            Some((*from, from_output, self_input))
+        })
+    }
+
+    pub fn node_outputs_iter<'a>(
+        &'a self,
+        id: NodeId,
+    ) -> impl Iterator<Item = (NodeId, &'a OutputName, &'a InputName)> {
+        let node = &self.nodes[id.0];
+
+        node.outputs
+            .iter()
+            .filter_map(|(self_output, output_socket)| {
+                let (to, to_input) = output_socket.link.as_ref()?;
+                Some((*to, self_output, to_input))
+            })
+    }
+
     pub fn link_nodes(
         &mut self,
         from: NodeId,
@@ -175,18 +246,25 @@ impl<T> Graph<T> {
                 self.nodes[from.0].outputs.get_mut(from_output).unwrap();
 
             if socket.link.is_some() {
-                anyhow::bail!("Output socket {}.{} already in use", from.0, from_output);
+                anyhow::bail!(
+                    "Output socket {}.{} already in use",
+                    from.0,
+                    from_output
+                );
             }
 
             socket.link = Some((to, to_input.into()));
         }
 
         {
-            let socket =
-                self.nodes[to.0].outputs.get_mut(to_input).unwrap();
+            let socket = self.nodes[to.0].outputs.get_mut(to_input).unwrap();
 
             if socket.link.is_some() {
-                anyhow::bail!("Input socket {}.{} already in use", to.0, to_input);
+                anyhow::bail!(
+                    "Input socket {}.{} already in use",
+                    to.0,
+                    to_input
+                );
             }
 
             socket.link = Some((from, from_output.into()));
