@@ -60,22 +60,89 @@ pub struct NodeContext<'a> {
 */
 
 #[derive(Clone)]
-pub enum OutputSource {
+pub enum OutputSource<T> {
     InputPassthrough {
         input: InputName,
     },
     Allocate {
-        allocate: Arc<dyn Fn(&GraphContext, NodeId) -> Result<Resource>>,
+        allocate: Arc<dyn Fn(&Graph<T>, NodeId) -> Result<Resource>>,
+    },
+    Ref {
+        resource: ResourceId,
     },
 }
 
+pub fn create_image_node<T>(
+    graph: &mut Graph<T>,
+    data: T,
+    format: TextureFormat,
+    usage: TextureUsages,
+    dims_graph_input: &str,
+) -> NodeId {
+    use rhai::reify;
+
+    let node_id = graph.add_node(data);
+    
+    let dims_graph_input = dims_graph_input.to_string();
+    let output_source: OutputSource<T> = OutputSource::Allocate {
+        allocate: Arc::new(move |graph, id| {
+            let input = dims_graph_input.as_str();
+
+            let dims = graph.graph_inputs.get(input).and_then(|v| {
+                let map = reify!(v.clone() => Option<rhai::Map>)?;
+                let x = map.get("x")?.clone();
+                let y = map.get("y")?.clone();
+
+                let x = reify!(x => Option<i64>)?;
+                let y = reify!(y => Option<i64>)?;
+
+                Some([x as u32, y as u32])
+            });
+
+            let dims = if let Some(dims) = dims {
+                dims
+            } else {
+                anyhow::bail!(
+                    "Error initializing image node:\
+                key `{}` not found in graph inputs, or value\
+                was not a map with integer `x` and `y` fields",
+                    input
+                );
+            };
+
+            let resource = Resource::Texture {
+                texture: None,
+                size: Some(dims),
+                format: Some(format),
+                usage,
+            };
+
+            Ok(resource)
+        }),
+    };
+
+    let output_socket = OutputSocket {
+        ty: DataType::Image,
+        link: None,
+        source: output_source,
+        resource: None,
+    };
+
+    {
+        let node = &mut graph.nodes[node_id.0];
+        node.outputs.insert("output".into(), output_socket);
+    }
+
+    node_id
+}
+
 #[derive(Clone)]
-pub struct OutputSocket {
+pub struct OutputSocket<T> {
     // name: OutputName,
     ty: DataType,
     link: Option<(NodeId, InputName)>,
 
-    source: OutputSource,
+    source: OutputSource<T>,
     resource: Option<ResourceHandle>,
 }
 
@@ -92,7 +159,7 @@ pub struct InputSocket {
 pub struct Node_<T> {
     id: NodeId,
     inputs: HashMap<InputName, InputSocket>,
-    outputs: HashMap<OutputName, OutputSocket>,
+    outputs: HashMap<OutputName, OutputSocket<T>>,
 
     is_prepared: bool,
     is_ready: bool,
@@ -107,6 +174,8 @@ pub struct Graph<T> {
     compute_pipelines: Vec<wgpu::ComputePipeline>,
     bind_group_layouts: Vec<BindGroupDef>,
     bind_groups: Vec<wgpu::BindGroup>,
+
+    graph_inputs: rhai::Map,
 }
 
 impl<T> Graph<T> {
@@ -271,6 +340,120 @@ impl<T> Graph<T> {
         }
 
         Ok(())
+    }
+
+    fn prepare_node(&mut self, node: NodeId) -> Result<bool> {
+        // let node = &mut self.nodes[node.0];
+        todo!();
+    }
+
+    fn is_allocated(&self, res: ResourceId) -> bool {
+        if let Some(res) = self.resources.get(res.0) {
+            match res {
+                Resource::Buffer { buffer, .. } => buffer.is_some(),
+                Resource::Texture { texture, .. } => texture.is_some(),
+            }
+        } else {
+            false
+        }
+    }
+
+    fn allocate_resource(
+        state: &super::State,
+        res: &mut Resource,
+    ) -> Result<()> {
+        match res {
+            Resource::Buffer {
+                buffer,
+                size,
+                usage,
+            } => {
+                if buffer.is_some() {
+                    // allocation already exists
+                    return Ok(());
+                }
+                if size.is_none() {
+                    anyhow::bail!("Can't allocate buffer without size")
+                }
+
+                let new_buffer =
+                    state.device.create_buffer(&BufferDescriptor {
+                        label: None,
+                        size: size.unwrap() as u64,
+                        usage: *usage,
+                        mapped_at_creation: false,
+                    });
+
+                *buffer = Some(new_buffer);
+            }
+            Resource::Texture {
+                texture,
+                size,
+                format,
+                usage,
+            } => {
+                if texture.is_some() {
+                    // allocation already exists
+                    return Ok(());
+                }
+                if size.is_none() || format.is_none() {
+                    anyhow::bail!(
+                        "Can't allocate image without known size and format"
+                    )
+                }
+
+                let [width, height] = size.unwrap();
+                let format = format.unwrap();
+
+                let new_texture = crate::texture::Texture::new(
+                    &state.device,
+                    &state.queue,
+                    width as usize,
+                    height as usize,
+                    format,
+                    *usage,
+                    None,
+                )?;
+
+                *texture = Some(new_texture);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn prepare_buffer(
+        &mut self,
+        size: Option<usize>,
+        usage: Option<BufferUsages>,
+    ) -> ResourceId {
+        let res = Resource::Buffer {
+            buffer: None,
+            size,
+            usage: usage.unwrap_or(BufferUsages::empty()),
+        };
+
+        let id = ResourceId(self.resources.len());
+        self.resources.push(res);
+        id
+    }
+
+    fn prepare_image(
+        &mut self,
+        size: Option<[u32; 2]>,
+        format: Option<TextureFormat>,
+        usage: Option<TextureUsages>,
+    ) -> ResourceId {
+        let res = Resource::Texture {
+            texture: None,
+            size,
+            format,
+            usage: usage.unwrap_or(TextureUsages::empty()),
+        };
+
+        let id = ResourceId(self.resources.len());
+        self.resources.push(res);
+        id
     }
 }
 
