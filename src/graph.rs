@@ -72,68 +72,10 @@ pub enum OutputSource<T> {
     },
 }
 
-pub fn create_image_node<T>(
-    graph: &mut Graph<T>,
-    data: T,
-    format: TextureFormat,
-    usage: TextureUsages,
-    dims_graph_input: &str,
-) -> NodeId {
-    use rhai::reify;
-
-    let node_id = graph.add_node(data);
-    
-    let dims_graph_input = dims_graph_input.to_string();
-    let output_source: OutputSource<T> = OutputSource::Allocate {
-        allocate: Arc::new(move |graph, id| {
-            let input = dims_graph_input.as_str();
-
-            let dims = graph.graph_inputs.get(input).and_then(|v| {
-                let map = reify!(v.clone() => Option<rhai::Map>)?;
-                let x = map.get("x")?.clone();
-                let y = map.get("y")?.clone();
-
-                let x = reify!(x => Option<i64>)?;
-                let y = reify!(y => Option<i64>)?;
-
-                Some([x as u32, y as u32])
-            });
-
-            let dims = if let Some(dims) = dims {
-                dims
-            } else {
-                anyhow::bail!(
-                    "Error initializing image node:\
-                key `{}` not found in graph inputs, or value\
-                was not a map with integer `x` and `y` fields",
-                    input
-                );
-            };
-
-            let resource = Resource::Texture {
-                texture: None,
-                size: Some(dims),
-                format: Some(format),
-                usage,
-            };
-
-            Ok(resource)
-        }),
-    };
-
-    let output_socket = OutputSocket {
-        ty: DataType::Image,
-        link: None,
-        source: output_source,
-        resource: None,
-    };
-
-    {
-        let node = &mut graph.nodes[node_id.0];
-        node.outputs.insert("output".into(), output_socket);
-    }
-
-    node_id
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum LocalSocketRef {
+    Input { socket_name: InputName },
+    Output { socket_name: OutputName }
 }
 
 #[derive(Clone)]
@@ -155,6 +97,16 @@ pub struct InputSocket {
     resource: Option<ResourceHandle>,
 }
 
+impl LocalSocketRef {
+    pub fn input(socket_name: &str) -> Self {
+        Self::Input { socket_name: socket_name.into() }
+    }
+    
+    pub fn output(socket_name: &str) -> Self {
+        Self::Output { socket_name: socket_name.into() }
+    }
+}
+
 #[derive(Clone)]
 pub struct Node_<T> {
     id: NodeId,
@@ -166,6 +118,51 @@ pub struct Node_<T> {
     data: T,
 }
 
+trait ExecuteNode {
+    fn execute<T>(
+        &self,
+        graph: &Graph<T>,
+        cmd: &mut CommandEncoder,
+    ) -> Result<()>;
+}
+
+#[derive(Default, Clone, Copy)]
+struct NodeNoOp;
+
+impl ExecuteNode for NodeNoOp {
+    fn execute<T>(
+        &self,
+        _graph: &Graph<T>,
+        _cmd: &mut CommandEncoder,
+    ) -> Result<()> {
+        Ok(())
+    }
+}
+
+#[derive(Default, Clone)]
+struct NodeComputeOp {
+    compute_pipeline: usize,
+    bind_group_layout: usize,
+
+    bind_group_framework: (),
+
+    /// Mapping from binding names in the shader (each 
+    /// corresponding to a group and binding index for a bind group)
+    /// to input/output sockets on the node instance
+    binding_socket_map: HashMap<rhai::ImmutableString, LocalSocketRef>,
+}
+
+impl ExecuteNode for NodeComputeOp {
+    fn execute<T>(
+        &self,
+        graph: &Graph<T>,
+        cmd: &mut CommandEncoder,
+    ) -> Result<()> {
+        todo!();
+    }
+}
+
+#[derive(Default)]
 pub struct Graph<T> {
     nodes: Vec<Node_<T>>,
 
@@ -456,6 +453,100 @@ impl<T> Graph<T> {
         id
     }
 }
+
+
+
+pub fn example_graph(
+    state: &mut super::State,
+    dims: [u32; 2],
+) -> Result<Graph<()>> {
+    let mut graph = Graph::default();
+
+    let create_image = create_image_node(
+        &mut graph,
+        (),
+        TextureFormat::Rgba8Unorm,
+        TextureUsages::COPY_DST
+            | TextureUsages::TEXTURE_BINDING
+            | TextureUsages::STORAGE_BINDING,
+        "window_dims",
+    );
+
+    let mut dims_map = rhai::Map::default();
+    dims_map.insert("x".into(), rhai::Dynamic::from_int(dims[0] as i64));
+    dims_map.insert("y".into(), rhai::Dynamic::from_int(dims[1] as i64));
+
+    graph
+        .graph_inputs
+        .insert("window_dims".into(), dims_map.into());
+
+    Ok(graph)
+}
+
+pub fn create_image_node<T>(
+    graph: &mut Graph<T>,
+    data: T,
+    format: TextureFormat,
+    usage: TextureUsages,
+    dims_graph_input: &str,
+) -> NodeId {
+    use rhai::reify;
+
+    let node_id = graph.add_node(data);
+
+    let dims_graph_input = dims_graph_input.to_string();
+    let output_source: OutputSource<T> = OutputSource::Allocate {
+        allocate: Arc::new(move |graph, id| {
+            let input = dims_graph_input.as_str();
+
+            let dims = graph.graph_inputs.get(input).and_then(|v| {
+                let map = reify!(v.clone() => Option<rhai::Map>)?;
+                let x = map.get("x")?.clone();
+                let y = map.get("y")?.clone();
+
+                let x = reify!(x => Option<i64>)?;
+                let y = reify!(y => Option<i64>)?;
+
+                Some([x as u32, y as u32])
+            });
+
+            let dims = if let Some(dims) = dims {
+                dims
+            } else {
+                anyhow::bail!(
+                    "Error initializing image node:\
+                key `{}` not found in graph inputs, or value\
+                was not a map with integer `x` and `y` fields",
+                    input
+                );
+            };
+
+            let resource = Resource::Texture {
+                texture: None,
+                size: Some(dims),
+                format: Some(format),
+                usage,
+            };
+
+            Ok(resource)
+        }),
+    };
+
+    let output_socket = OutputSocket {
+        ty: DataType::Image,
+        link: None,
+        source: output_source,
+        resource: None,
+    };
+
+    {
+        let node = &mut graph.nodes[node_id.0];
+        node.outputs.insert("output".into(), output_socket);
+    }
+
+    node_id
+}
+
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub enum NodeOutputDescriptor {

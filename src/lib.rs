@@ -10,6 +10,7 @@ use winit::{
 use anyhow::Result;
 
 pub mod graph;
+pub mod shader;
 pub mod texture;
 
 pub use graph::*;
