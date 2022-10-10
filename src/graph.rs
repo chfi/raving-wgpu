@@ -11,6 +11,21 @@ use std::{
 #[repr(transparent)]
 pub struct NodeId(usize);
 
+impl From<usize> for NodeId {
+    #[inline]
+    fn from(u: usize) -> Self {
+        Self(u)
+    }
+}
+
+impl From<NodeId> for usize {
+    #[inline]
+    fn from(u: NodeId) -> usize {
+        u.0
+    }
+    
+}
+
 pub type SocketIx = usize;
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -342,7 +357,7 @@ impl<T> Graph<T> {
         Ok(())
     }
 
-    fn prepare_node(&mut self, id: NodeId) -> Result<bool> {
+    pub fn prepare_node(&mut self, id: NodeId) -> Result<bool> {
         {
             // loop through all inputs and update the local `resource` fields
             let node = &self.nodes[id.0];
@@ -394,11 +409,9 @@ impl<T> Graph<T> {
                     OutputSource::Ref { resource } => {
                         //
                         // todo!();
-                        log::warn!("ref output sources unimplemented, ignored");
+                        log::error!("ref output sources unimplemented, ignored");
                     }
                 }
-
-                todo!();
             }
         }
 
@@ -576,18 +589,22 @@ pub fn create_image_node<T>(
     let output_source: OutputSource<T> = OutputSource::Allocate {
         allocate: Arc::new(move |graph, id| {
             let input = dims_graph_input.as_str();
+            log::error!("dims_graph_input: {}", dims_graph_input);
 
             let dims = graph.graph_inputs.get(input).and_then(|v| {
-                let map = reify!(v.clone() => Option<rhai::Map>)?;
+                dbg!();
+                dbg!(v.type_name());
+                let map = v.clone_cast::<rhai::Map>();
                 let x = map.get("x")?.clone();
                 let y = map.get("y")?.clone();
 
-                let x = reify!(x => Option<i64>)?;
-                let y = reify!(y => Option<i64>)?;
+                let x = x.as_int().ok()?;
+                let y = y.as_int().ok()?;
 
                 Some([x as u32, y as u32])
             });
 
+            log::error!("dims is: {:?}", dims);
             let dims = if let Some(dims) = dims {
                 dims
             } else {
