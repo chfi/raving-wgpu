@@ -7,6 +7,8 @@ use std::{
     sync::Arc,
 };
 
+use crate::ResourceId;
+
 /*
 struct ShaderBindings {
     groups: Vec<Vec<(GVarName, )
@@ -18,10 +20,116 @@ pub struct ComputeShader {
 
     bind_group_layouts: Vec<wgpu::BindGroupLayout>,
 
+    bind_group_entries: Vec<Vec<BindGroupLayoutEntry>>,
+
     shader_bindings: Vec<Vec<BindingDef>>,
 }
 
 impl ComputeShader {
+    pub fn create_bind_groups(
+        &self,
+        state: &super::State,
+        resources: &[super::graph::Resource],
+        // map binding variable names to resource IDs
+        resource_map: &HashMap<String, ResourceId>,
+    ) -> Result<Vec<wgpu::BindGroup>> {
+        let mut bind_groups = Vec::new();
+
+        for (group_ix, group) in self.bind_group_entries.iter().enumerate() {
+            let mut entries = Vec::new();
+
+            for (binding_ix, entry) in group.iter().enumerate() {
+                let def = &self.shader_bindings[group_ix][binding_ix];
+                let res_id =
+                    resource_map.get(def.global_var_name.as_str()).unwrap();
+
+                let resource = &resources[res_id.0];
+
+                match resource {
+                    crate::Resource::Buffer {
+                        buffer,
+                        size,
+                        usage,
+                    } => {
+                        let bind_res = match self.bind_group_entries[group_ix]
+                            [binding_ix]
+                            .ty
+                        {
+                            BindingType::Buffer { .. } => {
+                                BindingResource::Buffer(
+                                    buffer
+                                        .as_ref()
+                                        .unwrap()
+                                        .as_entire_buffer_binding(),
+                                )
+                            }
+                            _ => {
+                                panic!("TODO: Binding type mismatch!");
+                            }
+                        };
+
+                        let entry = BindGroupEntry {
+                            binding: binding_ix as u32,
+                            resource: bind_res,
+                        };
+
+                        entries.push(entry);
+                    }
+                    crate::Resource::Texture {
+                        texture,
+                        size,
+                        format,
+                        usage,
+                    } => {
+                        let bind_res = match self.bind_group_entries[group_ix]
+                            [binding_ix]
+                            .ty
+                        {
+                            BindingType::Buffer { .. } => {
+                                panic!("TODO: Binding type mismatch!");
+                            }
+                            BindingType::Sampler(_) => {
+                                BindingResource::Sampler(
+                                    &texture.as_ref().unwrap().sampler,
+                                )
+                            }
+                            BindingType::Texture { .. } => {
+                                BindingResource::TextureView(
+                                    &texture.as_ref().unwrap().view,
+                                )
+                            }
+                            BindingType::StorageTexture { .. } => {
+                                BindingResource::TextureView(
+                                    &texture.as_ref().unwrap().view,
+                                )
+                            }
+                        };
+
+                        let entry = BindGroupEntry {
+                            binding: binding_ix as u32,
+                            resource: bind_res,
+                        };
+
+                        entries.push(entry);
+                    }
+                }
+            }
+
+            let layout = &self.bind_group_layouts[group_ix];
+
+            let bind_group =
+                state.device.create_bind_group(&BindGroupDescriptor {
+                    label: None,
+                    layout,
+                    entries: entries.as_slice(),
+                });
+
+            bind_groups.push(bind_group);
+        }
+
+        Ok(bind_groups)
+    }
+
     pub fn from_spirv(
         state: &super::State,
         shader_src: &[u8],
@@ -76,6 +184,8 @@ impl ComputeShader {
                 push_constants = Some(push_const);
             }
         }
+
+        let mut bind_group_entries = Vec::new();
 
         let mut final_bindings = Vec::new();
 
@@ -193,6 +303,7 @@ impl ComputeShader {
                 },
             );
 
+            bind_group_entries.push(entries);
             bind_group_layouts.push(bind_group_layout);
 
             // let mut group_bindings = Vec::new();
@@ -233,6 +344,7 @@ impl ComputeShader {
         let compute_shader = ComputeShader {
             pipeline: compute_pipeline,
             bind_group_layouts,
+            bind_group_entries,
             shader_bindings: final_bindings,
         };
 
