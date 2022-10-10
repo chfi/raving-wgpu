@@ -44,7 +44,8 @@ impl ComputeShader {
         )?;
 
         let mut bind_group_layouts = Vec::new();
-        let mut push_constant_ranges = todo!();
+
+        let mut push_constants: Option<super::PushConstants> = None;
 
         let mut shader_bindings: BTreeMap<u32, Vec<BindingDef>> =
             BTreeMap::default();
@@ -52,21 +53,31 @@ impl ComputeShader {
         for (handle, var) in module.global_variables.iter() {
             if var.space == naga::AddressSpace::Handle && var.binding.is_some()
             {
-                let binding = var.binding.unwrap();
+                let binding = var.binding.as_ref().unwrap();
                 let ty = &module.types[var.ty];
 
                 let binding_def = BindingDef {
-                    global_var_name: var.name.unwrap().into(),
-                    binding: binding,
-                    ty: ty.inner,
+                    global_var_name: var.name.as_ref().unwrap().into(),
+                    binding: binding.clone(),
+                    ty: ty.inner.clone(),
                 };
 
                 shader_bindings
-                    .entry(binding.group)
+                    .entry(binding.group.clone())
                     .or_default()
                     .push(binding_def);
+            } else if var.space == naga::AddressSpace::PushConstant {
+                let ty = &module.types[var.ty];
+                let push_const = super::PushConstants::from_naga_struct(
+                    &module,
+                    &ty.inner,
+                    naga::ShaderStage::Compute,
+                )?;
+                push_constants = Some(push_const);
             }
         }
+
+        let mut final_bindings = Vec::new();
 
         let mut expected_group = 0;
         for (group_ix, mut defs) in shader_bindings {
@@ -83,6 +94,7 @@ impl ComputeShader {
             expected_group += 1;
 
             defs.sort_by_key(|def| def.binding.binding);
+            final_bindings.push(defs.clone());
 
             let mut entries: Vec<BindGroupLayoutEntry> = Vec::new();
 
@@ -100,7 +112,7 @@ impl ComputeShader {
                     );
                 }
 
-                let (ty, count) = match def.ty {
+                let (ty, count) = match &def.ty {
                     naga::TypeInner::Image {
                         dim,
                         arrayed,
@@ -113,26 +125,37 @@ impl ComputeShader {
                             panic!("unimplemented!");
                         }
                         naga::ImageClass::Storage { format, access } => {
+                            let read =
+                                access.contains(naga::StorageAccess::LOAD);
+                            let write =
+                                access.contains(naga::StorageAccess::STORE);
 
-                            let read = access.contains(naga::StorageAccess::LOAD);
-                            let write = access.contains(naga::StorageAccess::STORE);
-
-                            let format = format_naga_to_wgpu(format);
+                            let format = format_naga_to_wgpu(format.clone());
 
                             let access = match (read, write) {
                                 (false, false) => unreachable!(),
                                 (true, false) => StorageTextureAccess::ReadOnly,
-                                (false, true) => StorageTextureAccess::WriteOnly,
+                                (false, true) => {
+                                    StorageTextureAccess::WriteOnly
+                                }
                                 (true, true) => StorageTextureAccess::ReadWrite,
                             };
 
                             // let mut access = StorageTextureAccess::
 
                             let view_dimension = match dim {
-                                naga::ImageDimension::D1 => wgpu::TextureViewDimension::D1,
-                                naga::ImageDimension::D2 => wgpu::TextureViewDimension::D2,
-                                naga::ImageDimension::D3 => wgpu::TextureViewDimension::D3,
-                                naga::ImageDimension::Cube => wgpu::TextureViewDimension::Cube,
+                                naga::ImageDimension::D1 => {
+                                    wgpu::TextureViewDimension::D1
+                                }
+                                naga::ImageDimension::D2 => {
+                                    wgpu::TextureViewDimension::D2
+                                }
+                                naga::ImageDimension::D3 => {
+                                    wgpu::TextureViewDimension::D3
+                                }
+                                naga::ImageDimension::Cube => {
+                                    wgpu::TextureViewDimension::Cube
+                                }
                             };
 
                             let ty = wgpu::BindingType::StorageTexture {
@@ -162,13 +185,36 @@ impl ComputeShader {
 
             // create bind group layout and store definition
 
+            let bind_group_layout = state.device.create_bind_group_layout(
+                &wgpu::BindGroupLayoutDescriptor {
+                    // label: Some("test bind group layout"),
+                    label: None,
+                    entries: entries.as_slice(),
+                },
+            );
+
+            bind_group_layouts.push(bind_group_layout);
+
             // let mut group_bindings = Vec::new();
         }
 
+        let push_constant_range = {
+            let size = push_constants
+                .map(|p| p.buffer.len())
+                .unwrap_or_default() as u32;
+
+            PushConstantRange {
+                stages: wgpu::ShaderStages::COMPUTE,
+                range: 0..size,
+            }
+        };
+
+        let layout_refs = bind_group_layouts.iter().collect::<Vec<_>>();
+
         let pipeline_layout_desc = PipelineLayoutDescriptor {
             label: None,
-            bind_group_layouts: bind_group_layouts.as_slice(),
-            push_constant_ranges: push_constant_ranges,
+            bind_group_layouts: layout_refs.as_slice(),
+            push_constant_ranges: &[push_constant_range],
         };
 
         let pipeline_layout =
@@ -184,10 +230,17 @@ impl ComputeShader {
         let compute_pipeline =
             state.device.create_compute_pipeline(&compute_desc);
 
-        todo!();
+        let compute_shader = ComputeShader {
+            pipeline: compute_pipeline,
+            bind_group_layouts,
+            shader_bindings: final_bindings,
+        };
+
+        Ok(compute_shader)
     }
 }
 
+#[derive(Clone)]
 struct BindingDef {
     global_var_name: rhai::ImmutableString,
     binding: naga::ResourceBinding,

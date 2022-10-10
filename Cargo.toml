@@ -11,7 +11,7 @@ env_logger = "0.9"
 log = "0.4"
 
 wgpu = { version = "0.13", features = ["spirv"] }
-naga = { version = "0.9", features = ["spv-in", "glsl-in", "spv-out"] }
+naga = { version = "0.10", features = ["clone", "spv-in", "glsl-in", "spv-out"] }
 
 bytemuck = { version = "1.4", features = [ "derive" ] }
 
