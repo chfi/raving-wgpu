@@ -75,7 +75,7 @@ pub enum OutputSource<T> {
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum LocalSocketRef {
     Input { socket_name: InputName },
-    Output { socket_name: OutputName }
+    Output { socket_name: OutputName },
 }
 
 #[derive(Clone)]
@@ -99,11 +99,15 @@ pub struct InputSocket {
 
 impl LocalSocketRef {
     pub fn input(socket_name: &str) -> Self {
-        Self::Input { socket_name: socket_name.into() }
+        Self::Input {
+            socket_name: socket_name.into(),
+        }
     }
-    
+
     pub fn output(socket_name: &str) -> Self {
-        Self::Output { socket_name: socket_name.into() }
+        Self::Output {
+            socket_name: socket_name.into(),
+        }
     }
 }
 
@@ -146,7 +150,7 @@ struct NodeComputeOp {
 
     bind_group_framework: (),
 
-    /// Mapping from binding names in the shader (each 
+    /// Mapping from binding names in the shader (each
     /// corresponding to a group and binding index for a bind group)
     /// to input/output sockets on the node instance
     binding_socket_map: HashMap<rhai::ImmutableString, LocalSocketRef>,
@@ -171,7 +175,6 @@ pub struct Graph<T> {
     // compute_pipelines: Vec<wgpu::ComputePipeline>,
     // bind_group_layouts: Vec<BindGroupDef>,
     // bind_groups: Vec<wgpu::BindGroup>,
-
     graph_inputs: rhai::Map,
 }
 
@@ -339,9 +342,86 @@ impl<T> Graph<T> {
         Ok(())
     }
 
-    fn prepare_node(&mut self, node: NodeId) -> Result<bool> {
-        // let node = &mut self.nodes[node.0];
-        todo!();
+    fn prepare_node(&mut self, id: NodeId) -> Result<bool> {
+        {
+            // loop through all inputs and update the local `resource` fields
+            let node = &self.nodes[id.0];
+            let mut input_resources = Vec::new();
+
+            for (input_name, input) in node.inputs.iter() {
+                let (input_id, in_output_name) = input.link.as_ref().unwrap();
+
+                let other = &self.nodes[input_id.0];
+                let output = other.outputs.get(in_output_name).unwrap();
+
+                let handle = output.resource.unwrap().clone();
+
+                input_resources.push((input_name.clone(), handle));
+            }
+
+            let _ = node;
+
+            for (name, handle) in input_resources {
+                let input = self.nodes[id.0].inputs.get_mut(&name).unwrap();
+                input.resource = Some(handle);
+            }
+        }
+
+        let mut output_passthroughs: Vec<_> = Vec::new();
+        let mut output_resources: Vec<_> = Vec::new();
+
+        {
+            // scope since we need a mutable reference to `node` later
+            let node = &self.nodes[id.0];
+
+            // iterate through all node outputs, preparing or linking
+            // the appropriate resource descriptors
+            for (output_name, output) in node.outputs.iter() {
+                match &output.source {
+                    OutputSource::InputPassthrough { input } => {
+                        let input_socket = node.inputs.get(input).unwrap();
+
+                        output_passthroughs.push((
+                            output_name.clone(),
+                            input_socket.resource.unwrap().clone(),
+                        ));
+                    }
+                    OutputSource::Allocate { allocate } => {
+                        // allocate the resource and store it for later
+                        let resource = allocate(&self, id)?;
+                        output_resources.push((output_name.clone(), resource));
+                    }
+                    OutputSource::Ref { resource } => {
+                        //
+                        // todo!();
+                        log::warn!("ref output sources unimplemented, ignored");
+                    }
+                }
+
+                todo!();
+            }
+        }
+
+        for (output_name, handle) in output_passthroughs {
+            let socket = self.nodes[id.0].outputs.get_mut(&output_name).unwrap();
+            socket.resource = Some(handle);
+        }
+
+        for (output_name, res) in output_resources {
+            let res_id = ResourceId(self.resources.len());
+
+            let handle = ResourceHandle {
+                id: res_id,
+                time: 0,
+            };
+
+            self.resources.push(res);
+
+            let socket = self.nodes[id.0].outputs.get_mut(&output_name).unwrap();
+            socket.resource = Some(handle);
+        }
+
+        Ok(true)
     }
 
     fn is_allocated(&self, res: ResourceId) -> bool {
@@ -454,8 +534,6 @@ impl<T> Graph<T> {
     }
 }
 
-
-
 pub fn example_graph(
     state: &mut super::State,
     dims: [u32; 2],
@@ -547,7 +625,6 @@ pub fn create_image_node<T>(
     node_id
 }
 
-
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub enum NodeOutputDescriptor {
     Texture {
@@ -612,8 +689,6 @@ pub struct ComputeNode {
     // map from input sockets (and their contents) to bind group binding indices
     bind_group_map: Vec<(InputName, usize)>,
 }
-
-
 
 /*
 impl Node {
