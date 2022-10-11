@@ -40,7 +40,22 @@ impl Texture {
 
         let dimensions = [width as u32, height as u32];
 
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let view_desc = wgpu::TextureViewDescriptor {
+            label,
+            format: Some(format),
+            dimension: Some(wgpu::TextureViewDimension::D2),
+            ..wgpu::TextureViewDescriptor::default()
+            /*
+            aspect: todo!(),
+            base_mip_level: 1,
+            mip_level_count: 1,
+            base_array_layer: todo!(),
+            array_layer_count: todo!(),
+            */
+        };
+
+        // let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = texture.create_view(&view_desc);
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,

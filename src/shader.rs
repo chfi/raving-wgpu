@@ -16,7 +16,7 @@ struct ShaderBindings {
 */
 
 pub struct ComputeShader {
-    pipeline: wgpu::ComputePipeline,
+    pub pipeline: wgpu::ComputePipeline,
 
     bind_group_layouts: Vec<wgpu::BindGroupLayout>,
 
@@ -123,6 +123,8 @@ impl ComputeShader {
                     layout,
                     entries: entries.as_slice(),
                 });
+
+            log::error!("group {} - {:?}", group_ix, entries);
 
             bind_groups.push(bind_group);
         }
@@ -239,7 +241,12 @@ impl ComputeShader {
                             let write =
                                 access.contains(naga::StorageAccess::STORE);
 
+                                let input_format = format;
                             let format = format_naga_to_wgpu(format.clone());
+
+
+                            log::error!("{:?} -> {:?}\t{read}, {write}", input_format, format);
+
 
                             let access = match (read, write) {
                                 (false, false) => unreachable!(),
@@ -301,6 +308,8 @@ impl ComputeShader {
                     entries: entries.as_slice(),
                 },
             );
+            
+            log::error!("group {} - {:?}", group_ix, entries);
 
             bind_group_entries.push(entries);
             bind_group_layouts.push(bind_group_layout);

@@ -161,9 +161,9 @@ pub async fn run() -> anyhow::Result<()> {
 }
 
 pub struct State {
-    pub(crate) surface: wgpu::Surface,
-    pub(crate) device: wgpu::Device,
-    pub(crate) queue: wgpu::Queue,
+    pub surface: wgpu::Surface,
+    pub device: wgpu::Device,
+    pub queue: wgpu::Queue,
     pub(crate) config: wgpu::SurfaceConfiguration,
     pub(crate) size: winit::dpi::PhysicalSize<u32>,
 }
@@ -207,7 +207,8 @@ impl State {
             .await?;
 
         let config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+            | wgpu::TextureUsages::COPY_DST,
             format: surface.get_supported_formats(&adapter)[0],
             width: size.width,
             height: size.height,

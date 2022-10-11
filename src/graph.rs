@@ -150,7 +150,7 @@ pub struct Node_<T> {
     is_ready: bool,
     data: T,
 
-    pub bind: Option<Box<dyn BindableNode<T>>>,
+    // pub bind: Option<Box<dyn BindableNode<T>>>,
     pub execute: Option<Box<dyn ExecuteNode<T>>>,
 }
 
@@ -163,13 +163,25 @@ impl<T: std::fmt::Debug> std::fmt::Debug for Node_<T> {
             .field("is_prepared", &self.is_prepared)
             .field("is_ready", &self.is_ready)
             .field("data", &self.data)
-            .field("bind", &self.bind.is_some())
-            .field("execute", &self.execute.is_some())
             .finish()
     }
 }
 
-pub trait BindableNode<T> {
+
+pub struct ComputeShaderOp {
+    shader: Arc<crate::shader::ComputeShader>,
+    // mapping from compute shader global var. name to local socket
+    resource_map: HashMap<String, LocalSocketRef>,
+
+    pub bind_groups: Vec<BindGroup>,
+}
+
+pub trait ExecuteNode<T> {
+    fn execute(&self, graph: &Graph<T>, cmd: &mut CommandEncoder)
+        -> Result<()>;
+
+    fn set_bind_groups(&mut self, bind_groups: Vec<BindGroup>);
+        
     fn create_bind_groups(
         &self,
         node: &Node_<T>,
@@ -178,15 +190,15 @@ pub trait BindableNode<T> {
     ) -> Result<Vec<BindGroup>>;
 }
 
-pub struct ComputeShaderOp {
-    shader: Arc<crate::shader::ComputeShader>,
-    // mapping from compute shader global var. name to local socket
-    resource_map: HashMap<String, LocalSocketRef>,
+impl<T> ExecuteNode<T> for ComputeShaderOp {
 
-    bind_groups: Vec<BindGroup>,
-}
+    fn set_bind_groups(
+        &mut self,
+        bind_groups: Vec<BindGroup>,
+    ) {
+        self.bind_groups = bind_groups;
+    }
 
-impl<T> BindableNode<T> for ComputeShaderOp {
     fn create_bind_groups(
         &self,
         node: &Node_<T>,
@@ -214,62 +226,31 @@ impl<T> BindableNode<T> for ComputeShaderOp {
         self.shader
             .create_bind_groups_impl(state, resources, &binding_map)
     }
-}
-
-pub trait ExecuteNode<T> {
-    fn execute(&self, graph: &Graph<T>, cmd: &mut CommandEncoder)
-        -> Result<()>;
-}
-
-impl<T> ExecuteNode<T> for ComputeShaderOp {
+    
     fn execute(
         &self,
         graph: &Graph<T>,
         cmd: &mut CommandEncoder,
     ) -> Result<()> {
-        // bind pipeline
-        // bind bind groups
-        // figure out dispatch group counts
-        // dispatch
-        todo!()
-    }
-}
+        let mut pass = cmd.begin_compute_pass(&ComputePassDescriptor { label: None });
 
-#[derive(Default, Clone, Copy)]
-struct NodeNoOp;
+        pass.set_pipeline(&self.shader.pipeline);
 
-impl<T> ExecuteNode<T> for NodeNoOp {
-    fn execute(
-        &self,
-        _graph: &Graph<T>,
-        _cmd: &mut CommandEncoder,
-    ) -> Result<()> {
+        for (ix, group) in self.bind_groups.iter().enumerate() {
+            pass.set_bind_group(ix as u32, group, &[]);
+
+        }
+
+        // TODO figure out dispatch group counts
+        let x_groups = 800 / 16;
+        let y_groups = 600 / 16;
+        pass.dispatch_workgroups(x_groups, y_groups, 1);
+
         Ok(())
     }
 }
 
-#[derive(Default, Clone)]
-struct NodeComputeOp {
-    compute_pipeline: usize,
-    bind_group_layout: usize,
 
-    bind_group_framework: (),
-
-    /// Mapping from binding names in the shader (each
-    /// corresponding to a group and binding index for a bind group)
-    /// to input/output sockets on the node instance
-    binding_socket_map: HashMap<rhai::ImmutableString, LocalSocketRef>,
-}
-
-impl<T> ExecuteNode<T> for NodeComputeOp {
-    fn execute(
-        &self,
-        graph: &Graph<T>,
-        cmd: &mut CommandEncoder,
-    ) -> Result<()> {
-        todo!();
-    }
-}
 
 #[derive(Default)]
 pub struct Graph<T> {
@@ -296,7 +277,7 @@ impl<T> Graph<T> {
             is_ready: false,
             data,
 
-            bind: None,
+            // bind: None,
             execute: None,
         };
 
@@ -683,6 +664,7 @@ pub fn example_graph(
         (),
         TextureFormat::Rgba8Unorm,
         TextureUsages::COPY_DST
+            | TextureUsages::COPY_SRC
             | TextureUsages::TEXTURE_BINDING
             | TextureUsages::STORAGE_BINDING,
         "window_dims",
@@ -757,7 +739,7 @@ pub fn example_compute_node<T>(
         node.inputs.insert("input".into(), input_socket);
         node.outputs.insert("output".into(), output_socket);
 
-        node.bind = Some(Box::new(shader_op));
+        node.execute = Some(Box::new(shader_op));
     }
 
     Ok(node_id)
