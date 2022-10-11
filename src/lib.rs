@@ -184,14 +184,21 @@ impl State {
             .await
             .ok_or(anyhow::anyhow!("Could not find compatible adapter"))?;
 
+        // TODO push constants probably not supported on webgl2, so need fallback
+        let features = wgpu::Features::PUSH_CONSTANTS;
+
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
-                    features: wgpu::Features::empty(),
+                    features,
+                    // features: wgpu::Features::empty(),
                     limits: if cfg!(target_arch = "wasm32") {
                         wgpu::Limits::downlevel_webgl2_defaults()
                     } else {
-                        wgpu::Limits::default()
+                        wgpu::Limits {
+                            max_push_constant_size: 128,
+                            ..wgpu::Limits::default()
+                        }
                     },
                     label: None,
                 },

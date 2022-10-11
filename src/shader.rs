@@ -201,7 +201,6 @@ impl ComputeShader {
                     group_ix
                 );
             }
-            expected_group += 1;
 
             defs.sort_by_key(|def| def.binding.binding);
             final_bindings.push(defs.clone());
@@ -307,6 +306,8 @@ impl ComputeShader {
             bind_group_layouts.push(bind_group_layout);
 
             // let mut group_bindings = Vec::new();
+            
+            expected_group += 1;
         }
 
         let push_constant_range = {

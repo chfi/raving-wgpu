@@ -547,6 +547,32 @@ impl<T> Graph<T> {
         }
     }
 
+    pub fn allocate_node_resources(
+        &mut self,
+        state: &super::State,
+    ) -> Result<()> {
+        let mut resources = FxHashSet::default();
+        for node in self.nodes.iter() {
+            for socket in node.inputs.values() {
+                if let Some(h) = socket.resource {
+                    resources.insert(h.id);
+                }
+            }
+            for socket in node.outputs.values() {
+                if let Some(h) = socket.resource {
+                    resources.insert(h.id);
+                }
+            }
+        }
+
+        for res_id in resources {
+            let res = &mut self.resources[res_id.0];
+            Self::allocate_resource(state, res)?;
+        }
+
+        Ok(())
+    }
+
     fn allocate_resource(
         state: &super::State,
         res: &mut Resource,

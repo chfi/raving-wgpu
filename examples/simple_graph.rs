@@ -13,6 +13,8 @@ pub async fn run() -> anyhow::Result<()> {
     let done = graph.prepare_node(0.into())?;
     let done = graph.prepare_node(1.into())?;
 
+    graph.allocate_node_resources(&state)?;
+
     log::error!("Complete!");
 
     println!("Node 0:\n{:#?}", graph.nodes[0]);
