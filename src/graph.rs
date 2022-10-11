@@ -7,7 +7,7 @@ use std::{
     sync::Arc,
 };
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct NodeId(usize);
 
@@ -23,18 +23,18 @@ impl From<NodeId> for usize {
     fn from(u: NodeId) -> usize {
         u.0
     }
-    
 }
 
 pub type SocketIx = usize;
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum DataType {
     Buffer,
     Image,
     // Scalar,
 }
 
+#[derive(Debug)]
 pub enum Resource {
     Buffer {
         buffer: Option<wgpu::Buffer>,
@@ -49,21 +49,21 @@ pub enum Resource {
     },
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct ResourceId(pub usize);
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ResourceHandle {
     id: ResourceId,
     time: u64,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct TextureId(usize);
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct BufferId(usize);
 
@@ -87,13 +87,28 @@ pub enum OutputSource<T> {
     },
 }
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+impl<T> std::fmt::Debug for OutputSource<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InputPassthrough { input } => f
+                .debug_struct("InputPassthrough")
+                .field("input", input)
+                .finish(),
+            Self::Allocate { allocate } => f.debug_struct("Allocate").finish(),
+            Self::Ref { resource } => {
+                f.debug_struct("Ref").field("resource", resource).finish()
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum LocalSocketRef {
     Input { socket_name: InputName },
     Output { socket_name: OutputName },
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct OutputSocket<T> {
     // name: OutputName,
     ty: DataType,
@@ -103,7 +118,7 @@ pub struct OutputSocket<T> {
     resource: Option<ResourceHandle>,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct InputSocket {
     // name: InputName,
     ty: DataType,
@@ -126,7 +141,6 @@ impl LocalSocketRef {
     }
 }
 
-#[derive(Clone)]
 pub struct Node_<T> {
     id: NodeId,
     inputs: HashMap<InputName, InputSocket>,
@@ -135,21 +149,98 @@ pub struct Node_<T> {
     is_prepared: bool,
     is_ready: bool,
     data: T,
+
+    bind: Option<Box<dyn BindableNode<T>>>,
+    execute: Option<Box<dyn ExecuteNode<T>>>,
 }
 
-trait ExecuteNode {
-    fn execute<T>(
+impl<T: std::fmt::Debug> std::fmt::Debug for Node_<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Node_")
+            .field("id", &self.id)
+            .field("inputs", &self.inputs)
+            .field("outputs", &self.outputs)
+            .field("is_prepared", &self.is_prepared)
+            .field("is_ready", &self.is_ready)
+            .field("data", &self.data)
+            .field("bind", &self.bind.is_some())
+            .field("execute", &self.execute.is_some())
+            .finish()
+    }
+}
+
+pub trait BindableNode<T> {
+    fn create_bind_groups(
+        &self,
+        node: &Node_<T>,
+        state: &super::State,
+        resources: &[Resource],
+    ) -> Result<Vec<BindGroup>>;
+}
+
+pub struct ComputeShaderOp {
+    shader: Arc<crate::shader::ComputeShader>,
+    // mapping from compute shader global var. name to local socket
+    resource_map: HashMap<String, LocalSocketRef>,
+
+    bind_groups: Vec<BindGroup>,
+}
+
+impl<T> BindableNode<T> for ComputeShaderOp {
+    fn create_bind_groups(
+        &self,
+        node: &Node_<T>,
+        state: &crate::State,
+        resources: &[Resource],
+    ) -> Result<Vec<BindGroup>> {
+        let mut binding_map = HashMap::default();
+
+        for (g_var, socket) in &self.resource_map {
+            let res_id = match socket {
+                LocalSocketRef::Input { socket_name } => node
+                    .inputs
+                    .get(socket_name)
+                    .and_then(|socket| socket.resource),
+                LocalSocketRef::Output { socket_name } => node
+                    .outputs
+                    .get(socket_name)
+                    .and_then(|socket| socket.resource),
+            }
+            .ok_or_else(|| anyhow!("Socket `{:?}` not found", socket))?;
+
+            binding_map.insert(g_var.into(), res_id.id);
+        }
+
+        self.shader
+            .create_bind_groups_impl(state, resources, &binding_map)
+    }
+}
+
+trait ExecuteNode<T> {
+    fn execute(&self, graph: &Graph<T>, cmd: &mut CommandEncoder)
+        -> Result<()>;
+}
+
+impl<T> ExecuteNode<T> for ComputeShaderOp {
+    fn execute(
         &self,
         graph: &Graph<T>,
         cmd: &mut CommandEncoder,
-    ) -> Result<()>;
+    ) -> Result<()> {
+
+        // bind pipeline
+        // bind bind groups
+        // figure out dispatch group counts
+        // dispatch
+        todo!()
+    }
 }
 
 #[derive(Default, Clone, Copy)]
 struct NodeNoOp;
 
-impl ExecuteNode for NodeNoOp {
-    fn execute<T>(
+impl<T> ExecuteNode<T> for NodeNoOp {
+    fn execute(
         &self,
         _graph: &Graph<T>,
         _cmd: &mut CommandEncoder,
@@ -171,8 +262,8 @@ struct NodeComputeOp {
     binding_socket_map: HashMap<rhai::ImmutableString, LocalSocketRef>,
 }
 
-impl ExecuteNode for NodeComputeOp {
-    fn execute<T>(
+impl<T> ExecuteNode<T> for NodeComputeOp {
+    fn execute(
         &self,
         graph: &Graph<T>,
         cmd: &mut CommandEncoder,
@@ -183,14 +274,14 @@ impl ExecuteNode for NodeComputeOp {
 
 #[derive(Default)]
 pub struct Graph<T> {
-    nodes: Vec<Node_<T>>,
+    pub nodes: Vec<Node_<T>>,
 
-    resources: Vec<Resource>,
+    pub resources: Vec<Resource>,
 
     // compute_pipelines: Vec<wgpu::ComputePipeline>,
     // bind_group_layouts: Vec<BindGroupDef>,
     // bind_groups: Vec<wgpu::BindGroup>,
-    graph_inputs: rhai::Map,
+    pub graph_inputs: rhai::Map,
 }
 
 impl<T> Graph<T> {
@@ -205,6 +296,9 @@ impl<T> Graph<T> {
             is_prepared: false,
             is_ready: false,
             data,
+
+            bind: None,
+            execute: None,
         };
 
         self.nodes.push(node);
@@ -308,7 +402,7 @@ impl<T> Graph<T> {
             .nodes
             .get(to.0)
             .and_then(|n| {
-                let s = n.outputs.get(to_input)?;
+                let s = n.inputs.get(to_input)?;
                 Some(s.ty)
             })
             .ok_or_else(|| {
@@ -341,7 +435,7 @@ impl<T> Graph<T> {
         }
 
         {
-            let socket = self.nodes[to.0].outputs.get_mut(to_input).unwrap();
+            let socket = self.nodes[to.0].inputs.get_mut(to_input).unwrap();
 
             if socket.link.is_some() {
                 anyhow::bail!(
@@ -409,14 +503,17 @@ impl<T> Graph<T> {
                     OutputSource::Ref { resource } => {
                         //
                         // todo!();
-                        log::error!("ref output sources unimplemented, ignored");
+                        log::error!(
+                            "ref output sources unimplemented, ignored"
+                        );
                     }
                 }
             }
         }
 
         for (output_name, handle) in output_passthroughs {
-            let socket = self.nodes[id.0].outputs.get_mut(&output_name).unwrap();
+            let socket =
+                self.nodes[id.0].outputs.get_mut(&output_name).unwrap();
             socket.resource = Some(handle);
         }
 
@@ -430,7 +527,8 @@ impl<T> Graph<T> {
 
             self.resources.push(res);
 
-            let socket = self.nodes[id.0].outputs.get_mut(&output_name).unwrap();
+            let socket =
+                self.nodes[id.0].outputs.get_mut(&output_name).unwrap();
             socket.resource = Some(handle);
         }
 
@@ -571,7 +669,46 @@ pub fn example_graph(
         .graph_inputs
         .insert("window_dims".into(), dims_map.into());
 
+    let compute = example_compute_node(state, &mut graph, ());
+
+    dbg!();
+    graph.link_nodes(create_image, "output", compute, "input")?;
+    dbg!();
+
     Ok(graph)
+}
+
+pub fn example_compute_node<T>(
+    state: &super::State,
+    graph: &mut Graph<T>,
+    data: T,
+) -> NodeId {
+    let node_id = graph.add_node(data);
+
+    let output_source: OutputSource<T> = OutputSource::InputPassthrough {
+        input: "input".into(),
+    };
+
+    let output_socket = OutputSocket {
+        ty: DataType::Image,
+        link: None,
+        source: output_source,
+        resource: None,
+    };
+
+    let input_socket = InputSocket {
+        ty: DataType::Image,
+        link: None,
+        resource: None,
+    };
+
+    {
+        let node = &mut graph.nodes[node_id.0];
+        node.inputs.insert("input".into(), input_socket);
+        node.outputs.insert("output".into(), output_socket);
+    }
+
+    node_id
 }
 
 pub fn create_image_node<T>(

@@ -3,6 +3,7 @@ use std::num::NonZeroU32;
 use anyhow::*;
 use image::GenericImageView;
 
+#[derive(Debug)]
 pub struct Texture {
     pub dimensions: [u32; 2],
     usage: wgpu::TextureUsages,

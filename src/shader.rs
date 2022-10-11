@@ -26,7 +26,7 @@ pub struct ComputeShader {
 }
 
 impl ComputeShader {
-    pub fn create_bind_groups(
+    pub fn create_bind_groups_impl(
         &self,
         state: &super::State,
         resources: &[super::graph::Resource],
