@@ -150,8 +150,8 @@ pub struct Node_<T> {
     is_ready: bool,
     data: T,
 
-    bind: Option<Box<dyn BindableNode<T>>>,
-    execute: Option<Box<dyn ExecuteNode<T>>>,
+    pub bind: Option<Box<dyn BindableNode<T>>>,
+    pub execute: Option<Box<dyn ExecuteNode<T>>>,
 }
 
 impl<T: std::fmt::Debug> std::fmt::Debug for Node_<T> {
@@ -216,7 +216,7 @@ impl<T> BindableNode<T> for ComputeShaderOp {
     }
 }
 
-trait ExecuteNode<T> {
+pub trait ExecuteNode<T> {
     fn execute(&self, graph: &Graph<T>, cmd: &mut CommandEncoder)
         -> Result<()>;
 }
@@ -227,7 +227,6 @@ impl<T> ExecuteNode<T> for ComputeShaderOp {
         graph: &Graph<T>,
         cmd: &mut CommandEncoder,
     ) -> Result<()> {
-
         // bind pipeline
         // bind bind groups
         // figure out dispatch group counts
@@ -532,6 +531,8 @@ impl<T> Graph<T> {
             socket.resource = Some(handle);
         }
 
+        self.nodes[id.0].is_prepared = true;
+
         Ok(true)
     }
 
@@ -669,7 +670,7 @@ pub fn example_graph(
         .graph_inputs
         .insert("window_dims".into(), dims_map.into());
 
-    let compute = example_compute_node(state, &mut graph, ());
+    let compute = example_compute_node(state, &mut graph, ())?;
 
     dbg!();
     graph.link_nodes(create_image, "output", compute, "input")?;
@@ -682,7 +683,7 @@ pub fn example_compute_node<T>(
     state: &super::State,
     graph: &mut Graph<T>,
     data: T,
-) -> NodeId {
+) -> Result<NodeId> {
     let node_id = graph.add_node(data);
 
     let output_source: OutputSource<T> = OutputSource::InputPassthrough {
@@ -702,13 +703,38 @@ pub fn example_compute_node<T>(
         resource: None,
     };
 
+    let shader_op = {
+        let shader_src = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/shaders/shader.comp.spv"
+        ));
+
+        let shader = crate::shader::ComputeShader::from_spirv(
+            state, shader_src, "main",
+        )?;
+
+        let shader = Arc::new(shader);
+
+        let mut resource_map = HashMap::default();
+
+        resource_map.insert("image".into(), LocalSocketRef::input("input"));
+
+        ComputeShaderOp {
+            shader,
+            resource_map,
+            bind_groups: Vec::new(),
+        }
+    };
+
     {
         let node = &mut graph.nodes[node_id.0];
         node.inputs.insert("input".into(), input_socket);
         node.outputs.insert("output".into(), output_socket);
+
+        node.bind = Some(Box::new(shader_op));
     }
 
-    node_id
+    Ok(node_id)
 }
 
 pub fn create_image_node<T>(
