@@ -11,14 +11,33 @@ use super::BindingDef;
 
 #[derive(Debug)]
 pub struct GroupBindings {
-    group_ix: u32,
+    pub group_ix: u32,
 
-    layout: wgpu::BindGroupLayout,
-    entries: Vec<wgpu::BindGroupLayoutEntry>,
-    bindings: Vec<super::BindingDef>,
+    // when creating a pipeline layout, the bind groups need
+    // to be provided as a slice, which isn't possible with this approach!
+    // since you'd have to destroy the GroupBindings to get the layout out...
+    // annoying
+    //
+    // i guess i can store the layouts in a hashmap keyed by layout entries
+    // it *would* be good to have this type work more as a description
+    // that can be serialized
+    pub layout: wgpu::BindGroupLayout,
+    pub entries: Vec<wgpu::BindGroupLayoutEntry>,
+    pub(super) bindings: Vec<super::BindingDef>,
 }
 
 impl GroupBindings {
+
+    /*
+    pub fn create_bind_groups(&self,
+        state: &super::State,
+        resources: &[super::graph::Resource],
+        resource_map: &HashMap<String, ResourceId>,
+    ) -> Result<Vec<wgpu::BindGroup>> {
+        todo!();
+    }
+    */
+
     pub fn from_spirv(
         state: &crate::State,
         module: &naga::Module,

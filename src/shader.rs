@@ -50,10 +50,10 @@ impl VertexShader {
 pub struct ComputeShader {
     pub pipeline: wgpu::ComputePipeline,
 
+    // group_bindings: GroupBindings,
+
     bind_group_layouts: Vec<wgpu::BindGroupLayout>,
-
     bind_group_entries: Vec<Vec<BindGroupLayoutEntry>>,
-
     shader_bindings: Vec<Vec<BindingDef>>,
 }
 
