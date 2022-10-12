@@ -7,13 +7,46 @@ use std::{
     sync::Arc,
 };
 
-use crate::ResourceId;
+use crate::{ResourceId, shader::interface::GroupBindings};
+
+
+pub mod interface;
+// pub mod pushconst;
+// pub mod group_bindings;
 
 /*
 struct ShaderBindings {
     groups: Vec<Vec<(GVarName, )
 }
 */
+
+/*
+impl VertexShader {
+
+    pub fn from_spirv(
+        state: &super::State,
+        shader_src: &[u8],
+        entry_point: &str
+    ) -> Result<Self> {
+        let shader_desc = ShaderModuleDescriptor {
+            label: None,
+            source: wgpu::util::make_spirv(shader_src),
+        };
+
+        let shader_module = state.device.create_shader_module(shader_desc);
+
+        let module = naga::front::spv::parse_u8_slice(
+            shader_src,
+            &naga::front::spv::Options {
+                adjust_coordinate_space: true,
+                strict_capabilities: false,
+                block_ctx_dump_prefix: None,
+            },
+        )?;
+    }
+}
+*/
+
 
 pub struct ComputeShader {
     pub pipeline: wgpu::ComputePipeline,
@@ -153,9 +186,13 @@ impl ComputeShader {
             },
         )?;
 
+        log::error!("parsing group bindings");
+        let bindings = GroupBindings::from_spirv(state, &module)?;
+        log::error!("group bindings: {:#?}", bindings);
+
         let mut bind_group_layouts = Vec::new();
 
-        let mut push_constants: Option<super::PushConstants> = None;
+        let mut push_constants: Option<interface::PushConstants> = None;
 
         let mut shader_bindings: BTreeMap<u32, Vec<BindingDef>> =
             BTreeMap::default();
@@ -178,7 +215,7 @@ impl ComputeShader {
                     .push(binding_def);
             } else if var.space == naga::AddressSpace::PushConstant {
                 let ty = &module.types[var.ty];
-                let push_const = super::PushConstants::from_naga_struct(
+                let push_const = interface::PushConstants::from_naga_struct(
                     &module,
                     &ty.inner,
                     naga::ShaderStage::Compute,
@@ -313,29 +350,22 @@ impl ComputeShader {
 
             bind_group_entries.push(entries);
             bind_group_layouts.push(bind_group_layout);
-
-            // let mut group_bindings = Vec::new();
             
             expected_group += 1;
         }
 
-        let push_constant_range = {
-            let size = push_constants
-                .map(|p| p.buffer.len())
-                .unwrap_or_default() as u32;
-
-            PushConstantRange {
-                stages: wgpu::ShaderStages::COMPUTE,
-                range: 0..size,
-            }
-        };
-
         let layout_refs = bind_group_layouts.iter().collect::<Vec<_>>();
+
+        let push_constant_ranges = if let Some(p) = push_constants {
+            vec![p.to_range(wgpu::ShaderStages::COMPUTE)]
+        } else {
+            vec![]
+        };
 
         let pipeline_layout_desc = PipelineLayoutDescriptor {
             label: None,
             bind_group_layouts: layout_refs.as_slice(),
-            push_constant_ranges: &[push_constant_range],
+            push_constant_ranges: push_constant_ranges.as_slice(),
         };
 
         let pipeline_layout =
@@ -362,7 +392,7 @@ impl ComputeShader {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 struct BindingDef {
     global_var_name: rhai::ImmutableString,
     binding: naga::ResourceBinding,

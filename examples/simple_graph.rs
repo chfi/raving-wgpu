@@ -82,7 +82,9 @@ pub async fn run() -> anyhow::Result<()> {
 
     state.device.poll(wgpu::Maintain::Wait);
 
-    std::thread::sleep(std::time::Duration::from_millis(2000));
+    // use raving_wgpu::shader::interface::GroupBindings;
+
+    // std::thread::sleep(std::time::Duration::from_millis(2000));
     
     /*
     event_loop.run(move |event, _, control_flow| {

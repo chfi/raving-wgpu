@@ -659,9 +659,12 @@ pub fn example_graph(
 ) -> Result<Graph<()>> {
     let mut graph = Graph::default();
 
+    // let format = TextureFormat::Bgra8Unorm
+
     let create_image = create_image_node(
         &mut graph,
         (),
+        // TextureFormat::Bgra8Unorm,
         TextureFormat::Rgba8Unorm,
         TextureUsages::COPY_DST
             | TextureUsages::COPY_SRC

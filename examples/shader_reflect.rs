@@ -1,4 +1,4 @@
-use raving_wgpu::{State, PushConstants, PushConstantEntry};
+use raving_wgpu::{State, shader::interface::PushConstants};
 use winit::{
     event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent},
     event_loop::ControlFlow,
@@ -23,7 +23,7 @@ pub fn main() -> anyhow::Result<()> {
 
     let mut globals: Vec<(&naga::GlobalVariable, &naga::Type)> = Vec::new();
 
-    let mut pc: Option<raving_wgpu::PushConstants> = None;
+    let mut pc: Option<PushConstants> = None;
 
     for (handle, var) in module.global_variables.iter() {
         let ty = &module.types[var.ty];
