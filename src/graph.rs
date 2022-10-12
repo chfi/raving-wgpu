@@ -30,7 +30,7 @@ pub type SocketIx = usize;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum DataType {
     Buffer,
-    Image,
+    Texture,
     // Scalar,
 }
 
@@ -113,9 +113,39 @@ pub struct OutputSocket<T> {
     // name: OutputName,
     ty: DataType,
     link: Option<(NodeId, InputName)>,
-
     source: OutputSource<T>,
     resource: Option<ResourceHandle>,
+}
+
+impl<T> OutputSocket<T> {
+    pub fn buffer(source: OutputSource<T>) -> Self {
+        OutputSocket {
+            ty: DataType::Buffer,
+            link: None,
+            source,
+            resource: None,
+        }
+    }
+
+    pub fn texture(source: OutputSource<T>) -> Self {
+        OutputSocket {
+            ty: DataType::Texture,
+            link: None,
+            source,
+            resource: None,
+        }
+    }
+
+    pub fn passthrough(ty: DataType, socket: &str) -> Self {
+        OutputSocket {
+            ty,
+            link: None,
+            source: OutputSource::InputPassthrough {
+                input: socket.into(),
+            },
+            resource: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -123,8 +153,25 @@ pub struct InputSocket {
     // name: InputName,
     ty: DataType,
     link: Option<(NodeId, OutputName)>,
-
     resource: Option<ResourceHandle>,
+}
+
+impl InputSocket {
+    pub fn buffer() -> Self {
+        InputSocket {
+            ty: DataType::Buffer,
+            link: None,
+            resource: None,
+        }
+    }
+
+    pub fn texture() -> Self {
+        InputSocket {
+            ty: DataType::Texture,
+            link: None,
+            resource: None,
+        }
+    }
 }
 
 impl LocalSocketRef {
@@ -431,14 +478,24 @@ impl<T> Graph<T> {
             let mut input_resources = Vec::new();
 
             for (input_name, input) in node.inputs.iter() {
-                let (input_id, in_output_name) = input.link.as_ref().unwrap();
+                let (input_id, in_output_name) =
+                    input.link.as_ref().ok_or_else(|| {
+                        anyhow!("Input socket {}.{} not set", id.0, input_name,)
+                    })?;
 
                 let other = &self.nodes[input_id.0];
-                let output = other.outputs.get(in_output_name).unwrap();
+                let output =
+                    other.outputs.get(in_output_name).ok_or_else(|| {
+                        anyhow!(
+                            "Output socket {}.{} not set",
+                            input_id.0,
+                            in_output_name,
+                        )
+                    })?;
 
-                let handle = output.resource.unwrap().clone();
-
-                input_resources.push((input_name.clone(), handle));
+                if let Some(handle) = output.resource {
+                    input_resources.push((input_name.clone(), handle));
+                }
             }
 
             let _ = node;
@@ -676,8 +733,18 @@ pub fn example_graph(
 
     let compute = example_compute_node(state, &mut graph, ())?;
 
+    let buffer_size = 512;
+
+    let buffer = create_buffer_node(
+        &mut graph,
+        (),
+        BufferUsages::COPY_SRC | BufferUsages::STORAGE,
+        buffer_size,
+    );
+
     dbg!();
     graph.link_nodes(create_image, "output", compute, "input")?;
+    graph.link_nodes(buffer, "output", compute, "buffer_in")?;
     dbg!();
 
     Ok(graph)
@@ -690,19 +757,20 @@ pub fn example_compute_node<T>(
 ) -> Result<NodeId> {
     let node_id = graph.add_node(data);
 
-    let output_source: OutputSource<T> = OutputSource::InputPassthrough {
-        input: "input".into(),
-    };
+    let output_socket = OutputSocket::passthrough(DataType::Texture, "input");
+    // let output_source: OutputSource<T> = OutputSource::InputPassthrough {
+    //     input: "input".into(),
+    // };
 
-    let output_socket = OutputSocket {
-        ty: DataType::Image,
-        link: None,
-        source: output_source,
-        resource: None,
-    };
+    // let output_socket = OutputSocket {
+    //     ty: DataType::Texture,
+    //     link: None,
+    //     source: output_source,
+    //     resource: None,
+    // };
 
     let input_socket = InputSocket {
-        ty: DataType::Image,
+        ty: DataType::Texture,
         link: None,
         resource: None,
     };
@@ -733,6 +801,14 @@ pub fn example_compute_node<T>(
     {
         let node = &mut graph.nodes[node_id.0];
         node.inputs.insert("input".into(), input_socket);
+        node.inputs.insert(
+            "buffer_in".into(),
+            InputSocket {
+                ty: DataType::Buffer,
+                link: None,
+                resource: None,
+            },
+        );
         node.outputs.insert("output".into(), output_socket);
 
         node.execute = Some(Box::new(shader_op));
@@ -759,12 +835,7 @@ pub fn create_buffer_node<T>(
         }),
     };
 
-    let output_socket = OutputSocket {
-        ty: DataType::Image,
-        link: None,
-        source: output_source,
-        resource: None,
-    };
+    let output_socket = OutputSocket::buffer(output_source);
 
     {
         let node = &mut graph.nodes[node_id.0];
@@ -828,7 +899,7 @@ pub fn create_image_node<T>(
     };
 
     let output_socket = OutputSocket {
-        ty: DataType::Image,
+        ty: DataType::Texture,
         link: None,
         source: output_source,
         resource: None,
@@ -842,135 +913,6 @@ pub fn create_image_node<T>(
     node_id
 }
 
-#[derive(Clone, PartialEq, Eq, Hash)]
-pub enum NodeOutputDescriptor {
-    Texture {
-        desc: wgpu::TextureDescriptor<'static>,
-        data: Option<Vec<u8>>,
-    },
-    Buffer {
-        desc: wgpu::BufferDescriptor<'static>,
-        data: Option<Vec<u8>>,
-    },
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum NodeOutput {
-    Texture { texture: TextureId },
-    Buffer { buffer: BufferId },
-}
-
-pub struct NodeOutputDef {
-    name: rhai::ImmutableString,
-    allocate: Option<Arc<dyn Fn(rhai::Map) -> Result<NodeOutputDescriptor>>>,
-}
-
 pub type InputName = rhai::ImmutableString;
 pub type OutputName = rhai::ImmutableString;
 pub type CtxInputName = rhai::ImmutableString;
-
-pub struct Node {
-    id: NodeId,
-
-    input_defs: Vec<(InputName, DataType)>,
-    inputs: HashMap<InputName, NodeOutput>,
-
-    output_defs: Vec<NodeOutputDef>,
-    outputs: HashMap<OutputName, NodeOutput>,
-
-    // encodes the edges
-    input_socket_links: HashMap<InputName, (NodeId, OutputName)>,
-    output_socket_links: HashMap<OutputName, (NodeId, InputName)>,
-
-    // map from input names to sets of affected outputs,
-    // outputs identified by name in the `outputs` map
-    context_inputs: HashMap<CtxInputName, Vec<OutputName>>,
-    // inputs: HashMap<rhai::ImmutableString,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct ComputeNodeDef {
-    pipeline: usize, // index into graph context's compute_pipeline vec
-    bind_group_layout: usize, // index in graph ctx `bind_group_layouts` vec
-    push_constant_size: u32,
-}
-
-// TODO: only supports a single bind group for now
-pub struct ComputeNode {
-    node: Node,
-
-    compute_def: ComputeNodeDef,
-
-    bind_group: Option<usize>, // index in graph ctx `bind_group` vec
-
-    // map from input sockets (and their contents) to bind group binding indices
-    bind_group_map: Vec<(InputName, usize)>,
-}
-
-/*
-impl Node {
-    pub fn node_create_image(id: NodeId) -> Result<Self> {
-        // let output_name = format!("create_image_output_{}", id.0);
-
-        let alloc = move |ctx_input: rhai::Map| {
-            let dims = ctx_input.get("dims").expect("context input missing");
-            let dims = dims.clone_cast::<rhai::Map>();
-            let width = dims.get("width").unwrap().as_int().unwrap();
-            let height = dims.get("height").unwrap().as_int().unwrap();
-
-            let size = wgpu::Extent3d {
-                width: width as u32,
-                height: height as u32,
-                depth_or_array_layers: 1,
-            };
-
-            use wgpu::TextureUsages as Usages;
-
-            let texture_desc = wgpu::TextureDescriptor {
-                label: None, // Some(&name),
-                size: size,
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8Unorm,
-                usage: Usages::TEXTURE_BINDING | Usages::COPY_SRC,
-            };
-
-            let desc = NodeOutputDescriptor::Texture {
-                desc: texture_desc,
-                data: None,
-            };
-
-            Ok(desc)
-        };
-
-        let allocate = Arc::new(alloc)
-            as Arc<dyn Fn(rhai::Map) -> Result<NodeOutputDescriptor>>;
-
-        let output_def = NodeOutputDef {
-            name: "output".into(),
-            allocate: Some(allocate),
-        };
-
-        let mut result = Node {
-            id,
-
-            input_defs: Vec::new(),
-            inputs: HashMap::default(),
-
-            input_socket_links: HashMap::default(),
-            output_socket_links: HashMap::default(),
-
-            output_defs: vec![output_def],
-            outputs: HashMap::default(),
-            context_inputs: HashMap::default(),
-        };
-
-        result
-            .context_inputs
-            .insert("dims".into(), vec!["output".into()]);
-
-        Ok(result)
-    }
-}
-*/
