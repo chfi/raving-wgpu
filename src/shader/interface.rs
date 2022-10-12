@@ -21,13 +21,12 @@ pub struct GroupBindings {
     // i guess i can store the layouts in a hashmap keyed by layout entries
     // it *would* be good to have this type work more as a description
     // that can be serialized
-    pub layout: wgpu::BindGroupLayout,
+    // pub layout: wgpu::BindGroupLayout,
     pub entries: Vec<wgpu::BindGroupLayoutEntry>,
     pub(super) bindings: Vec<super::BindingDef>,
 }
 
 impl GroupBindings {
-
     /*
     pub fn create_bind_groups(&self,
         state: &super::State,
@@ -38,10 +37,20 @@ impl GroupBindings {
     }
     */
 
-    pub fn from_spirv(
+    pub fn create_bind_group_layout(
+        &self,
         state: &crate::State,
-        module: &naga::Module,
-    ) -> Result<Vec<Self>> {
+    ) -> wgpu::BindGroupLayout {
+        state.device.create_bind_group_layout(
+            &wgpu::BindGroupLayoutDescriptor {
+                // label: Some("test bind group layout"),
+                label: None,
+                entries: self.entries.as_slice(),
+            },
+        )
+    }
+
+    pub fn from_spirv(module: &naga::Module) -> Result<Vec<Self>> {
         let mut result = Vec::new();
 
         let mut shader_bindings: BTreeMap<u32, Vec<BindingDef>> =
@@ -200,21 +209,11 @@ impl GroupBindings {
                 entries.push(entry);
             }
 
-            // create bind group layout and store definition
-
-            let bind_group_layout = state.device.create_bind_group_layout(
-                &wgpu::BindGroupLayoutDescriptor {
-                    // label: Some("test bind group layout"),
-                    label: None,
-                    entries: entries.as_slice(),
-                },
-            );
-
             log::error!("group {} - {:?}", group_ix, entries);
 
             result.push(GroupBindings {
                 group_ix,
-                layout: bind_group_layout,
+                // layout: bind_group_layout,
                 entries,
                 bindings: defs,
             });
@@ -257,7 +256,7 @@ impl PushConstants {
         let size = self.buffer.len();
 
         PushConstantRange {
-            stages: wgpu::ShaderStages::COMPUTE,
+            stages,
             range: 0..size as u32,
         }
     }

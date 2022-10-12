@@ -50,11 +50,11 @@ impl VertexShader {
 pub struct ComputeShader {
     pub pipeline: wgpu::ComputePipeline,
 
-    // group_bindings: GroupBindings,
-
+    group_bindings: Vec<GroupBindings>,
     bind_group_layouts: Vec<wgpu::BindGroupLayout>,
-    bind_group_entries: Vec<Vec<BindGroupLayoutEntry>>,
-    shader_bindings: Vec<Vec<BindingDef>>,
+
+    // bind_group_entries: Vec<Vec<BindGroupLayoutEntry>>,
+    // shader_bindings: Vec<Vec<BindingDef>>,
 }
 
 impl ComputeShader {
@@ -67,11 +67,13 @@ impl ComputeShader {
     ) -> Result<Vec<wgpu::BindGroup>> {
         let mut bind_groups = Vec::new();
 
-        for (group_ix, group) in self.bind_group_entries.iter().enumerate() {
+        for bindings in self.group_bindings.iter() {
             let mut entries = Vec::new();
 
-            for (binding_ix, entry) in group.iter().enumerate() {
-                let def = &self.shader_bindings[group_ix][binding_ix];
+            for (binding_ix, entry) in bindings.entries.iter().enumerate() {
+
+                let def = &bindings.bindings[binding_ix];
+                
                 let res_id =
                     resource_map.get(def.global_var_name.as_str()).unwrap();
 
@@ -83,9 +85,7 @@ impl ComputeShader {
                         size,
                         usage,
                     } => {
-                        let bind_res = match self.bind_group_entries[group_ix]
-                            [binding_ix]
-                            .ty
+                        let bind_res = match entry.ty
                         {
                             BindingType::Buffer { .. } => {
                                 BindingResource::Buffer(
@@ -113,9 +113,7 @@ impl ComputeShader {
                         format,
                         usage,
                     } => {
-                        let bind_res = match self.bind_group_entries[group_ix]
-                            [binding_ix]
-                            .ty
+                        let bind_res = match entry.ty
                         {
                             BindingType::Buffer { .. } => {
                                 panic!("TODO: Binding type mismatch!");
@@ -145,8 +143,11 @@ impl ComputeShader {
                         entries.push(entry);
                     }
                 }
+
             }
 
+            let group_ix = bindings.group_ix as usize;
+            
             let layout = &self.bind_group_layouts[group_ix];
 
             let bind_group =
@@ -159,7 +160,9 @@ impl ComputeShader {
             log::error!("group {} - {:?}", group_ix, entries);
 
             bind_groups.push(bind_group);
+
         }
+
 
         Ok(bind_groups)
     }
@@ -186,37 +189,15 @@ impl ComputeShader {
         )?;
 
         log::error!("parsing group bindings");
-        let bindings = GroupBindings::from_spirv(state, &module)?;
-        log::error!("group bindings: {:#?}", bindings);
+        let group_bindings = GroupBindings::from_spirv(&module)?;
+        log::error!("group bindings: {:#?}", group_bindings);
 
         let mut bind_group_layouts = Vec::new();
 
         let mut push_constants: Option<interface::PushConstants> = None;
 
-        let mut shader_bindings: BTreeMap<u32, Vec<BindingDef>> =
-            BTreeMap::default();
-
         for (handle, var) in module.global_variables.iter() {
-            log::error!("{:#?}", var);
-            if (matches!(var.space, naga::AddressSpace::Storage { .. })
-                || var.space == naga::AddressSpace::Handle)
-                && var.binding.is_some()
-            {
-                let binding = var.binding.as_ref().unwrap();
-                let ty = &module.types[var.ty];
-
-                let binding_def = BindingDef {
-                    global_var_name: var.name.as_ref().unwrap().into(),
-                    binding: binding.clone(),
-                    ty: ty.inner.clone(),
-                };
-
-                log::error!("pushing binding for {:?}", var);
-                shader_bindings
-                    .entry(binding.group.clone())
-                    .or_default()
-                    .push(binding_def);
-            } else if var.space == naga::AddressSpace::PushConstant {
+            if var.space == naga::AddressSpace::PushConstant {
                 let ty = &module.types[var.ty];
                 let push_const = interface::PushConstants::from_naga_struct(
                     &module,
@@ -227,15 +208,12 @@ impl ComputeShader {
             }
         }
 
-        let mut bind_group_entries = Vec::new();
-
-        let mut final_bindings = Vec::new();
-
         let mut expected_group = 0;
-        for (group_ix, mut defs) in shader_bindings {
-            // Group and binding indices both have to be compact,
-            // so while `shader_bindings` is a BTreeMap, its keys
-            // have to be in some `0..n` range, and iterated in order
+
+        for bindings in group_bindings.iter() {
+            let group_ix = bindings.group_ix;
+
+            // Group indices both have to be compact and sorted
             if expected_group != group_ix {
                 anyhow::bail!(
                     "Missing group index: Expected {}, but saw {}",
@@ -243,138 +221,21 @@ impl ComputeShader {
                     group_ix
                 );
             }
-
-            defs.sort_by_key(|def| def.binding.binding);
-            final_bindings.push(defs.clone());
-
-            let mut entries: Vec<BindGroupLayoutEntry> = Vec::new();
-
-            for (binding_ix, def) in defs.iter().enumerate() {
-                if binding_ix as u32 != def.binding.binding
-                    || expected_group != def.binding.group
-                {
-                    anyhow::bail!(
-                        "Binding index mismatch: Was (group {}, binding {}),\
-                        but expected (group {}, binding {})",
-                        def.binding.group,
-                        def.binding.binding,
-                        expected_group,
-                        binding_ix
-                    );
-                }
-
-                let (ty, count) = match &def.ty {
-                    naga::TypeInner::Image {
-                        dim,
-                        arrayed,
-                        class,
-                    } => match class {
-                        naga::ImageClass::Depth { multi } => {
-                            panic!("unimplemented!");
-                        }
-                        naga::ImageClass::Sampled { kind, multi } => {
-                            panic!("unimplemented!");
-                        }
-                        naga::ImageClass::Storage { format, access } => {
-                            let read =
-                                access.contains(naga::StorageAccess::LOAD);
-                            let write =
-                                access.contains(naga::StorageAccess::STORE);
-
-                            let input_format = format;
-                            let format = format_naga_to_wgpu(format.clone());
-
-                            log::error!(
-                                "{:?} -> {:?}\t{read}, {write}",
-                                input_format,
-                                format
-                            );
-
-                            let access = match (read, write) {
-                                (false, false) => unreachable!(),
-                                (true, false) => StorageTextureAccess::ReadOnly,
-                                (false, true) => {
-                                    StorageTextureAccess::WriteOnly
-                                }
-                                (true, true) => StorageTextureAccess::ReadWrite,
-                            };
-
-                            // let mut access = StorageTextureAccess::
-
-                            let view_dimension = match dim {
-                                naga::ImageDimension::D1 => {
-                                    wgpu::TextureViewDimension::D1
-                                }
-                                naga::ImageDimension::D2 => {
-                                    wgpu::TextureViewDimension::D2
-                                }
-                                naga::ImageDimension::D3 => {
-                                    wgpu::TextureViewDimension::D3
-                                }
-                                naga::ImageDimension::Cube => {
-                                    wgpu::TextureViewDimension::Cube
-                                }
-                            };
-
-                            let ty = wgpu::BindingType::StorageTexture {
-                                access,
-                                format,
-                                view_dimension,
-                            };
-
-                            (ty, None)
-                        }
-                    },
-                    naga::TypeInner::Struct { members, span } => {
-                        let ty = wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage {
-                                read_only: false,
-                            },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        };
-                        (ty, None)
-                    }
-                    e => {
-                        panic!("unimplemented: {:?}", e);
-                    }
-                };
-
-                let entry = BindGroupLayoutEntry {
-                    binding: def.binding.binding,
-                    visibility: ShaderStages::COMPUTE,
-                    ty,
-                    count,
-                };
-
-                entries.push(entry);
-                //
-            }
-
-            // create bind group layout and store definition
-
-            let bind_group_layout = state.device.create_bind_group_layout(
-                &wgpu::BindGroupLayoutDescriptor {
-                    // label: Some("test bind group layout"),
-                    label: None,
-                    entries: entries.as_slice(),
-                },
-            );
-            dbg!();
-
-            log::error!("group {} - {:?}", group_ix, entries);
-
-            bind_group_entries.push(entries);
+            
+            let bind_group_layout = bindings.create_bind_group_layout(state);
             bind_group_layouts.push(bind_group_layout);
 
             expected_group += 1;
         }
 
+
         let layout_refs = bind_group_layouts.iter().collect::<Vec<_>>();
 
         let push_constant_ranges = if let Some(p) = push_constants {
+            dbg!();
             vec![p.to_range(wgpu::ShaderStages::COMPUTE)]
         } else {
+            dbg!();
             vec![]
         };
 
@@ -399,9 +260,9 @@ impl ComputeShader {
 
         let compute_shader = ComputeShader {
             pipeline: compute_pipeline,
+
+            group_bindings,
             bind_group_layouts,
-            bind_group_entries,
-            shader_bindings: final_bindings,
         };
 
         Ok(compute_shader)
