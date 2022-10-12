@@ -167,7 +167,6 @@ impl<T: std::fmt::Debug> std::fmt::Debug for Node_<T> {
     }
 }
 
-
 pub struct ComputeShaderOp {
     shader: Arc<crate::shader::ComputeShader>,
     // mapping from compute shader global var. name to local socket
@@ -181,7 +180,7 @@ pub trait ExecuteNode<T> {
         -> Result<()>;
 
     fn set_bind_groups(&mut self, bind_groups: Vec<BindGroup>);
-        
+
     fn create_bind_groups(
         &self,
         node: &Node_<T>,
@@ -191,11 +190,7 @@ pub trait ExecuteNode<T> {
 }
 
 impl<T> ExecuteNode<T> for ComputeShaderOp {
-
-    fn set_bind_groups(
-        &mut self,
-        bind_groups: Vec<BindGroup>,
-    ) {
+    fn set_bind_groups(&mut self, bind_groups: Vec<BindGroup>) {
         self.bind_groups = bind_groups;
     }
 
@@ -226,19 +221,19 @@ impl<T> ExecuteNode<T> for ComputeShaderOp {
         self.shader
             .create_bind_groups_impl(state, resources, &binding_map)
     }
-    
+
     fn execute(
         &self,
         graph: &Graph<T>,
         cmd: &mut CommandEncoder,
     ) -> Result<()> {
-        let mut pass = cmd.begin_compute_pass(&ComputePassDescriptor { label: None });
+        let mut pass =
+            cmd.begin_compute_pass(&ComputePassDescriptor { label: None });
 
         pass.set_pipeline(&self.shader.pipeline);
 
         for (ix, group) in self.bind_groups.iter().enumerate() {
             pass.set_bind_group(ix as u32, group, &[]);
-
         }
 
         // TODO figure out dispatch group counts
@@ -249,8 +244,6 @@ impl<T> ExecuteNode<T> for ComputeShaderOp {
         Ok(())
     }
 }
-
-
 
 #[derive(Default)]
 pub struct Graph<T> {
@@ -746,6 +739,39 @@ pub fn example_compute_node<T>(
     }
 
     Ok(node_id)
+}
+
+pub fn create_buffer_node<T>(
+    graph: &mut Graph<T>,
+    data: T,
+    usage: BufferUsages,
+    size: usize,
+) -> NodeId {
+    let node_id = graph.add_node(data);
+
+    let output_source: OutputSource<T> = OutputSource::Allocate {
+        allocate: Arc::new(move |graph, id| {
+            Ok(Resource::Buffer {
+                buffer: None,
+                size: Some(size),
+                usage,
+            })
+        }),
+    };
+
+    let output_socket = OutputSocket {
+        ty: DataType::Image,
+        link: None,
+        source: output_source,
+        resource: None,
+    };
+
+    {
+        let node = &mut graph.nodes[node_id.0];
+        node.outputs.insert("output".into(), output_socket);
+    }
+
+    node_id
 }
 
 pub fn create_image_node<T>(
