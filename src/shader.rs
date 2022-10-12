@@ -7,8 +7,7 @@ use std::{
     sync::Arc,
 };
 
-use crate::{ResourceId, shader::interface::GroupBindings};
-
+use crate::{shader::interface::GroupBindings, ResourceId};
 
 pub mod interface;
 // pub mod pushconst;
@@ -47,7 +46,7 @@ impl VertexShader {
 }
 */
 
-
+#[derive(Debug)]
 pub struct ComputeShader {
     pub pipeline: wgpu::ComputePipeline,
 
@@ -198,7 +197,10 @@ impl ComputeShader {
             BTreeMap::default();
 
         for (handle, var) in module.global_variables.iter() {
-            if var.space == naga::AddressSpace::Handle && var.binding.is_some()
+            log::error!("{:#?}", var);
+            if (matches!(var.space, naga::AddressSpace::Storage { .. })
+                || var.space == naga::AddressSpace::Handle)
+                && var.binding.is_some()
             {
                 let binding = var.binding.as_ref().unwrap();
                 let ty = &module.types[var.ty];
@@ -209,6 +211,7 @@ impl ComputeShader {
                     ty: ty.inner.clone(),
                 };
 
+                log::error!("pushing binding for {:?}", var);
                 shader_bindings
                     .entry(binding.group.clone())
                     .or_default()
@@ -278,12 +281,14 @@ impl ComputeShader {
                             let write =
                                 access.contains(naga::StorageAccess::STORE);
 
-                                let input_format = format;
+                            let input_format = format;
                             let format = format_naga_to_wgpu(format.clone());
 
-
-                            log::error!("{:?} -> {:?}\t{read}, {write}", input_format, format);
-
+                            log::error!(
+                                "{:?} -> {:?}\t{read}, {write}",
+                                input_format,
+                                format
+                            );
 
                             let access = match (read, write) {
                                 (false, false) => unreachable!(),
@@ -320,6 +325,16 @@ impl ComputeShader {
                             (ty, None)
                         }
                     },
+                    naga::TypeInner::Struct { members, span } => {
+                        let ty = wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage {
+                                read_only: false,
+                            },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        };
+                        (ty, None)
+                    }
                     e => {
                         panic!("unimplemented: {:?}", e);
                     }
@@ -345,12 +360,13 @@ impl ComputeShader {
                     entries: entries.as_slice(),
                 },
             );
-            
+            dbg!();
+
             log::error!("group {} - {:?}", group_ix, entries);
 
             bind_group_entries.push(entries);
             bind_group_layouts.push(bind_group_layout);
-            
+
             expected_group += 1;
         }
 

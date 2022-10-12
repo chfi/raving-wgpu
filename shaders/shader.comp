@@ -2,16 +2,29 @@
 
 layout (rgba8, set = 0, binding = 0) writeonly uniform image2D image;
 
+// layout (set = 0, binding = 1) writeonly buffer MyBuffer {
+layout (set = 0, binding = 1) buffer MyBuffer {
+  uint data[];
+} my_buf;
+
 layout (push_constant) uniform Inputs {
   vec4 color;
   int img_width;
   int img_height;
 } inputs;
 
-layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
 void main() {
   ivec2 xy = ivec2(gl_GlobalInvocationID.xy);
+
+  if (xy.x < 32) {
+    my_buf.data[xy.x] = 255;
+  }
+
+  // if (xy.x >= 512) {
+    // return;
+  // }
 
   if (xy.x >= inputs.img_width || xy.y >= inputs.img_height) {
     return;

@@ -265,6 +265,9 @@ impl<T> ExecuteNode<T> for ComputeShaderOp {
             binding_map.insert(g_var.into(), res_id.id);
         }
 
+        dbg!();
+        log::error!("{:#?}", binding_map);
+
         self.shader
             .create_bind_groups_impl(state, resources, &binding_map)
     }
@@ -284,8 +287,10 @@ impl<T> ExecuteNode<T> for ComputeShaderOp {
         }
 
         // TODO figure out dispatch group counts
-        let x_groups = 800 / 16;
-        let y_groups = 600 / 16;
+        let x_groups = 4;
+        let y_groups = 1;
+        // let x_groups = 800 / 16;
+        // let y_groups = 600 / 16;
         pass.dispatch_workgroups(x_groups, y_groups, 1);
 
         Ok(())
@@ -757,6 +762,7 @@ pub fn example_compute_node<T>(
 ) -> Result<NodeId> {
     let node_id = graph.add_node(data);
 
+    dbg!();
     let output_socket = OutputSocket::passthrough(DataType::Texture, "input");
     // let output_source: OutputSource<T> = OutputSource::InputPassthrough {
     //     input: "input".into(),
@@ -785,11 +791,14 @@ pub fn example_compute_node<T>(
             state, shader_src, "main",
         )?;
 
+        log::error!("shader!! {:#?}", shader);
+
         let shader = Arc::new(shader);
 
         let mut resource_map = HashMap::default();
 
         resource_map.insert("image".into(), LocalSocketRef::input("input"));
+        resource_map.insert("my_buf".into(), LocalSocketRef::input("buffer_in"));
 
         ComputeShaderOp {
             shader,

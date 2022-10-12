@@ -29,7 +29,14 @@ impl GroupBindings {
             BTreeMap::default();
 
         for (handle, var) in module.global_variables.iter() {
-            if var.space == naga::AddressSpace::Handle && var.binding.is_some()
+            // if let naga::AddressSpace::Storage { access } = var.space {
+            //     if var.binding_is.some() {
+            //     }
+            // }
+
+            if (matches!(var.space, naga::AddressSpace::Storage { .. })
+                || var.space == naga::AddressSpace::Handle)
+                && var.binding.is_some()
             {
                 let binding = var.binding.as_ref().unwrap();
                 let ty = &module.types[var.ty];
@@ -148,6 +155,17 @@ impl GroupBindings {
                             (ty, None)
                         }
                     },
+                    naga::TypeInner::Struct { members, span } => {
+                        let ty = wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage {
+                                read_only: false,
+                            },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        };
+                        (ty, None)
+                    }
+                    // naga::TypeInner::
                     e => {
                         panic!("unimplemented: {:?}", e);
                     }
