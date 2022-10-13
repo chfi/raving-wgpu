@@ -10,51 +10,13 @@ use std::{
 use crate::{shader::interface::GroupBindings, ResourceId};
 
 pub mod interface;
-// pub mod pushconst;
-// pub mod group_bindings;
-
-/*
-struct ShaderBindings {
-    groups: Vec<Vec<(GVarName, )
-}
-*/
-
-/*
-impl VertexShader {
-
-    pub fn from_spirv(
-        state: &super::State,
-        shader_src: &[u8],
-        entry_point: &str
-    ) -> Result<Self> {
-        let shader_desc = ShaderModuleDescriptor {
-            label: None,
-            source: wgpu::util::make_spirv(shader_src),
-        };
-
-        let shader_module = state.device.create_shader_module(shader_desc);
-
-        let module = naga::front::spv::parse_u8_slice(
-            shader_src,
-            &naga::front::spv::Options {
-                adjust_coordinate_space: true,
-                strict_capabilities: false,
-                block_ctx_dump_prefix: None,
-            },
-        )?;
-    }
-}
-*/
 
 #[derive(Debug)]
 pub struct ComputeShader {
     pub pipeline: wgpu::ComputePipeline,
 
-    group_bindings: Vec<GroupBindings>,
-    bind_group_layouts: Vec<wgpu::BindGroupLayout>,
-
-    // bind_group_entries: Vec<Vec<BindGroupLayoutEntry>>,
-    // shader_bindings: Vec<Vec<BindingDef>>,
+    pub group_bindings: Vec<GroupBindings>,
+    pub bind_group_layouts: Vec<wgpu::BindGroupLayout>,
 }
 
 impl ComputeShader {
@@ -68,101 +30,17 @@ impl ComputeShader {
         let mut bind_groups = Vec::new();
 
         for bindings in self.group_bindings.iter() {
-            let mut entries = Vec::new();
+            let ix = bindings.group_ix as usize;
+            let layout = &self.bind_group_layouts[ix];
 
-            for (binding_ix, entry) in bindings.entries.iter().enumerate() {
-
-                let def = &bindings.bindings[binding_ix];
-                
-                let res_id =
-                    resource_map.get(def.global_var_name.as_str()).unwrap();
-
-                let resource = &resources[res_id.0];
-
-                match resource {
-                    crate::Resource::Buffer {
-                        buffer,
-                        size,
-                        usage,
-                    } => {
-                        let bind_res = match entry.ty
-                        {
-                            BindingType::Buffer { .. } => {
-                                BindingResource::Buffer(
-                                    buffer
-                                        .as_ref()
-                                        .unwrap()
-                                        .as_entire_buffer_binding(),
-                                )
-                            }
-                            _ => {
-                                panic!("TODO: Binding type mismatch!");
-                            }
-                        };
-
-                        let entry = BindGroupEntry {
-                            binding: binding_ix as u32,
-                            resource: bind_res,
-                        };
-
-                        entries.push(entry);
-                    }
-                    crate::Resource::Texture {
-                        texture,
-                        size,
-                        format,
-                        usage,
-                    } => {
-                        let bind_res = match entry.ty
-                        {
-                            BindingType::Buffer { .. } => {
-                                panic!("TODO: Binding type mismatch!");
-                            }
-                            BindingType::Sampler(_) => {
-                                BindingResource::Sampler(
-                                    &texture.as_ref().unwrap().sampler,
-                                )
-                            }
-                            BindingType::Texture { .. } => {
-                                BindingResource::TextureView(
-                                    &texture.as_ref().unwrap().view,
-                                )
-                            }
-                            BindingType::StorageTexture { .. } => {
-                                BindingResource::TextureView(
-                                    &texture.as_ref().unwrap().view,
-                                )
-                            }
-                        };
-
-                        let entry = BindGroupEntry {
-                            binding: binding_ix as u32,
-                            resource: bind_res,
-                        };
-
-                        entries.push(entry);
-                    }
-                }
-
-            }
-
-            let group_ix = bindings.group_ix as usize;
-            
-            let layout = &self.bind_group_layouts[group_ix];
-
-            let bind_group =
-                state.device.create_bind_group(&BindGroupDescriptor {
-                    label: None,
-                    layout,
-                    entries: entries.as_slice(),
-                });
-
-            log::error!("group {} - {:?}", group_ix, entries);
-
+            let bind_group = bindings.create_bind_group(
+                state,
+                layout,
+                resources,
+                resource_map,
+            )?;
             bind_groups.push(bind_group);
-
         }
-
 
         Ok(bind_groups)
     }
@@ -221,13 +99,12 @@ impl ComputeShader {
                     group_ix
                 );
             }
-            
+
             let bind_group_layout = bindings.create_bind_group_layout(state);
             bind_group_layouts.push(bind_group_layout);
 
             expected_group += 1;
         }
-
 
         let layout_refs = bind_group_layouts.iter().collect::<Vec<_>>();
 
@@ -270,10 +147,10 @@ impl ComputeShader {
 }
 
 #[derive(Debug, Clone)]
-struct BindingDef {
-    global_var_name: rhai::ImmutableString,
-    binding: naga::ResourceBinding,
-    ty: naga::TypeInner,
+pub(crate) struct BindingDef {
+    pub(crate) global_var_name: rhai::ImmutableString,
+    pub(crate) binding: naga::ResourceBinding,
+    pub(crate) ty: naga::TypeInner,
 }
 
 pub fn format_naga_to_wgpu(format: naga::StorageFormat) -> wgpu::TextureFormat {

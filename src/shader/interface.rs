@@ -1,41 +1,80 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use anyhow::Result;
-use wgpu::{PushConstantRange, StorageTextureAccess};
+use wgpu::{PushConstantRange, StorageTextureAccess, BindingType, BindingResource};
 
 use super::BindingDef;
 
 // uniforms...
-
 // bind groups
 
 #[derive(Debug)]
 pub struct GroupBindings {
     pub group_ix: u32,
 
-    // when creating a pipeline layout, the bind groups need
-    // to be provided as a slice, which isn't possible with this approach!
-    // since you'd have to destroy the GroupBindings to get the layout out...
-    // annoying
-    //
-    // i guess i can store the layouts in a hashmap keyed by layout entries
-    // it *would* be good to have this type work more as a description
-    // that can be serialized
-    // pub layout: wgpu::BindGroupLayout,
     pub entries: Vec<wgpu::BindGroupLayoutEntry>,
-    pub(super) bindings: Vec<super::BindingDef>,
+    pub(crate) bindings: Vec<super::BindingDef>,
 }
 
 impl GroupBindings {
-    /*
-    pub fn create_bind_groups(&self,
-        state: &super::State,
-        resources: &[super::graph::Resource],
-        resource_map: &HashMap<String, ResourceId>,
-    ) -> Result<Vec<wgpu::BindGroup>> {
-        todo!();
+    pub fn create_bind_group(
+        &self,
+        state: &crate::State,
+        layout: &wgpu::BindGroupLayout,
+        resources: &[crate::graph::Resource],
+        resource_map: &HashMap<String, crate::graph::ResourceId>,
+    ) -> Result<wgpu::BindGroup> {
+        let mut entries = Vec::new();
+
+        for (binding_ix, entry) in self.entries.iter().enumerate() {
+            let def = &self.bindings[binding_ix];
+
+            let res_id =
+                resource_map.get(def.global_var_name.as_str()).unwrap();
+
+            let resource = &resources[res_id.0];
+
+            let binding_resource = match resource {
+                crate::Resource::Buffer { buffer, .. } => match entry.ty {
+                    BindingType::Buffer { .. } => BindingResource::Buffer(
+                        buffer.as_ref().unwrap().as_entire_buffer_binding(),
+                    ),
+                    _ => {
+                        panic!("TODO: Binding type mismatch!");
+                    }
+                },
+                crate::Resource::Texture { texture, .. } => match entry.ty {
+                    BindingType::Sampler(_) => BindingResource::Sampler(
+                        &texture.as_ref().unwrap().sampler,
+                    ),
+                    BindingType::Texture { .. }
+                    | BindingType::StorageTexture { .. } => {
+                        BindingResource::TextureView(
+                            &texture.as_ref().unwrap().view,
+                        )
+                    }
+                    BindingType::Buffer { .. } => {
+                        panic!("TODO: Binding type mismatch!");
+                    }
+                },
+            };
+
+            let entry = wgpu::BindGroupEntry {
+                binding: binding_ix as u32,
+                resource: binding_resource,
+            };
+
+            entries.push(entry);
+        }
+
+        let bind_group = state.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout,
+            entries: entries.as_slice(),
+        });
+
+        Ok(bind_group)
     }
-    */
 
     pub fn create_bind_group_layout(
         &self,
@@ -57,11 +96,6 @@ impl GroupBindings {
             BTreeMap::default();
 
         for (handle, var) in module.global_variables.iter() {
-            // if let naga::AddressSpace::Storage { access } = var.space {
-            //     if var.binding_is.some() {
-            //     }
-            // }
-
             if (matches!(var.space, naga::AddressSpace::Storage { .. })
                 || var.space == naga::AddressSpace::Handle)
                 && var.binding.is_some()
@@ -81,9 +115,6 @@ impl GroupBindings {
                     .push(binding_def);
             }
 
-            // log::error!("var.space: {:?}", var.space);
-            // match var.space {
-            // }
         }
 
         let mut final_bindings = Vec::new();

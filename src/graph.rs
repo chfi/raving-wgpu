@@ -755,6 +755,70 @@ pub fn example_graph(
     Ok(graph)
 }
 
+pub fn create_compute_node<T>(
+    state: &super::State,
+    graph: &mut Graph<T>,
+    data: T,
+    shader_src: &[u8],
+) -> Result<NodeId> {
+    let mut inputs = Vec::new();
+
+    let shader_op = {
+        let shader = crate::shader::ComputeShader::from_spirv(
+            state, shader_src, "main",
+        )?;
+
+        log::error!("shader!! {:#?}", shader);
+
+        let shader = Arc::new(shader);
+
+        let mut resource_map = HashMap::default();
+
+        for bindings in shader.group_bindings.iter() {
+            for (binding_ix, entry) in bindings.entries.iter().enumerate() {
+                // insert into resource map, and create corresponding sockets
+
+                let var_name = &bindings.bindings[binding_ix].global_var_name;
+                resource_map.insert(
+                    var_name.to_string(),
+                    LocalSocketRef::input(var_name.as_str()),
+                );
+
+                let socket = match entry.ty {
+                    BindingType::Buffer { .. } => InputSocket::buffer(),
+                    BindingType::Sampler(_) => InputSocket::texture(),
+                    BindingType::Texture { .. } => InputSocket::texture(),
+                    BindingType::StorageTexture { .. } => {
+                        InputSocket::texture()
+                    }
+                };
+
+                inputs.push((var_name.clone(), socket));
+                
+            }
+        }
+
+        ComputeShaderOp {
+            shader,
+            resource_map,
+            bind_groups: Vec::new(),
+        }
+    };
+
+    // not using any outputs for now
+
+    let node_id = graph.add_node(data);
+
+    {
+        let node = &mut graph.nodes[node_id.0];
+
+        node.inputs.extend(inputs);
+        // node.outputs.extend(outputs);
+    }
+
+    Ok(node_id)
+}
+
 pub fn example_compute_node<T>(
     state: &super::State,
     graph: &mut Graph<T>,
@@ -762,18 +826,7 @@ pub fn example_compute_node<T>(
 ) -> Result<NodeId> {
     let node_id = graph.add_node(data);
 
-    dbg!();
     let output_socket = OutputSocket::passthrough(DataType::Texture, "input");
-    // let output_source: OutputSource<T> = OutputSource::InputPassthrough {
-    //     input: "input".into(),
-    // };
-
-    // let output_socket = OutputSocket {
-    //     ty: DataType::Texture,
-    //     link: None,
-    //     source: output_source,
-    //     resource: None,
-    // };
 
     let input_socket = InputSocket {
         ty: DataType::Texture,
@@ -798,7 +851,8 @@ pub fn example_compute_node<T>(
         let mut resource_map = HashMap::default();
 
         resource_map.insert("image".into(), LocalSocketRef::input("input"));
-        resource_map.insert("my_buf".into(), LocalSocketRef::input("buffer_in"));
+        resource_map
+            .insert("my_buf".into(), LocalSocketRef::input("buffer_in"));
 
         ComputeShaderOp {
             shader,
