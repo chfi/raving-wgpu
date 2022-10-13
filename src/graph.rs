@@ -79,9 +79,12 @@ pub enum OutputSource {
     InputPassthrough {
         input: InputName,
     },
-    Allocate {
-        allocate: Arc<dyn Fn(&Graph, NodeId) -> Result<Resource>>,
+    PrepareAllocation {
+        prepare: Arc<dyn Fn(&NodeResourceCtx<'_>) -> Result<Resource>>,
     },
+    // Allocate {
+    //     allocate: Arc<dyn Fn(&Graph, NodeId) -> Result<Resource>>,
+    // },
     Ref {
         resource: ResourceId,
     },
@@ -94,7 +97,8 @@ impl std::fmt::Debug for OutputSource {
                 .debug_struct("InputPassthrough")
                 .field("input", input)
                 .finish(),
-            Self::Allocate { allocate } => f.debug_struct("Allocate").finish(),
+            Self::PrepareAllocation { prepare } => f.debug_struct("PrepareAllocation").finish(),
+            // Self::Allocate { allocate } => f.debug_struct("Allocate").finish(),
             Self::Ref { resource } => {
                 f.debug_struct("Ref").field("resource", resource).finish()
             }
@@ -202,6 +206,113 @@ pub struct Node {
     pub execute: Option<Box<dyn ExecuteNode>>,
 }
 
+pub struct NodeResourceCtx<'a> {
+    graph_scalars: &'a rhai::Map,
+    resources: &'a [Resource],
+    node: &'a Node,
+}
+
+pub enum NodePrepareError {
+    InputDoesNotExist { input_name: InputName },
+    InputUnlinked { input_name: InputName },
+    InputTypeMismatch { was: DataType, expected: DataType },
+
+    InputSizeMissing,
+    InputTextureFormatMissing,
+}
+
+impl<'a> NodeResourceCtx<'a> {
+    pub fn input_resource(
+        &self,
+        input_name: &str,
+    ) -> std::result::Result<&Resource, NodePrepareError> {
+        let socket = self.node.inputs.get(input_name).ok_or_else(|| {
+            NodePrepareError::InputDoesNotExist {
+                input_name: input_name.into(),
+            }
+        })?;
+
+        if socket.link.is_none() {
+            return Err(NodePrepareError::InputUnlinked {
+                input_name: input_name.into(),
+            });
+        }
+
+        // the `NodeResourceCtx` is created after this node's inputs have been
+        // processed, so if this socket is linked, we know the `resource` field
+        // is `Some`
+        let handle = socket.resource.unwrap();
+
+        let resource = &self.resources[handle.id.0];
+
+        Ok(resource)
+    }
+
+    pub fn input_buffer_size(
+        &self,
+        input_name: &str,
+    ) -> std::result::Result<usize, NodePrepareError> {
+        let resource = self.input_resource(input_name)?;
+
+        match resource {
+            Resource::Buffer { size, .. } => {
+                if let Some(size) = size {
+                    Ok(*size)
+                } else {
+                    Err(NodePrepareError::InputSizeMissing)
+                }
+            }
+            Resource::Texture { .. } => {
+                Err(NodePrepareError::InputTypeMismatch {
+                    was: DataType::Texture,
+                    expected: DataType::Buffer,
+                })
+            }
+        }
+    }
+
+    pub fn input_texture_size(
+        &self,
+        input_name: &str,
+    ) -> std::result::Result<[u32; 2], NodePrepareError> {
+        let resource = self.input_resource(input_name)?;
+
+        match resource {
+            Resource::Buffer { .. } => {
+                Err(NodePrepareError::InputTypeMismatch {
+                    was: DataType::Buffer,
+                    expected: DataType::Texture,
+                })
+            }
+            Resource::Texture { size, .. } => {
+                if let Some(size) = size {
+                    Ok(*size)
+                } else {
+                    Err(NodePrepareError::InputSizeMissing)
+                }
+            }
+        }
+    }
+
+    /*
+    pub fn input_texture(&self) -> std::result::Result<&Resource, NodePrepareError> {
+        todo!();
+    }
+    */
+
+    pub fn from_id(graph: &'a Graph, id: NodeId) -> Self {
+        let graph_scalars = &graph.graph_inputs;
+        let resources = &graph.resources;
+        let node = &graph.nodes[id.0];
+
+        Self {
+            graph_scalars,
+            resources,
+            node,
+        }
+    }
+}
+
 impl std::fmt::Debug for Node {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Node")
@@ -224,8 +335,7 @@ pub struct ComputeShaderOp {
 }
 
 pub trait ExecuteNode {
-    fn execute(&self, graph: &Graph, cmd: &mut CommandEncoder)
-        -> Result<()>;
+    fn execute(&self, graph: &Graph, cmd: &mut CommandEncoder) -> Result<()>;
 
     fn set_bind_groups(&mut self, bind_groups: Vec<BindGroup>);
 
@@ -273,11 +383,7 @@ impl ExecuteNode for ComputeShaderOp {
             .create_bind_groups_impl(state, resources, &binding_map)
     }
 
-    fn execute(
-        &self,
-        graph: &Graph,
-        cmd: &mut CommandEncoder,
-    ) -> Result<()> {
+    fn execute(&self, graph: &Graph, cmd: &mut CommandEncoder) -> Result<()> {
         let mut pass =
             cmd.begin_compute_pass(&ComputePassDescriptor { label: None });
 
@@ -520,6 +626,8 @@ impl Graph {
             // scope since we need a mutable reference to `node` later
             let node = &self.nodes[id.0];
 
+            let ctx = NodeResourceCtx::from_id(&self, id);
+
             // iterate through all node outputs, preparing or linking
             // the appropriate resource descriptors
             for (output_name, output) in node.outputs.iter() {
@@ -532,11 +640,15 @@ impl Graph {
                             input_socket.resource.unwrap().clone(),
                         ));
                     }
-                    OutputSource::Allocate { allocate } => {
+                    OutputSource::PrepareAllocation { prepare } => {
                         // allocate the resource and store it for later
-                        let resource = allocate(&self, id)?;
+                        let resource = prepare(&ctx)?;
                         output_resources.push((output_name.clone(), resource));
                     }
+                    // OutputSource::Allocate { allocate } => {
+                        // let resource = allocate(&self, id)?;
+                        // output_resources.push((output_name.clone(), resource));
+                    // }
                     OutputSource::Ref { resource } => {
                         //
                         // todo!();
@@ -799,7 +911,6 @@ pub fn create_compute_node(
                 };
 
                 inputs.push((var_name.clone(), socket));
-                
             }
         }
 
@@ -892,8 +1003,8 @@ pub fn create_buffer_node(
 ) -> NodeId {
     let node_id = graph.add_node();
 
-    let output_source: OutputSource = OutputSource::Allocate {
-        allocate: Arc::new(move |graph, id| {
+    let output_source: OutputSource = OutputSource::PrepareAllocation {
+        prepare: Arc::new(move |_ctx| {
             Ok(Resource::Buffer {
                 buffer: None,
                 size: Some(size),
@@ -921,12 +1032,12 @@ pub fn create_image_node(
     let node_id = graph.add_node();
 
     let dims_graph_input = dims_graph_input.to_string();
-    let output_source: OutputSource = OutputSource::Allocate {
-        allocate: Arc::new(move |graph, id| {
+    let output_source: OutputSource = OutputSource::PrepareAllocation {
+        prepare: Arc::new(move |ctx| {
             let input = dims_graph_input.as_str();
             log::error!("dims_graph_input: {}", dims_graph_input);
 
-            let dims = graph.graph_inputs.get(input).and_then(|v| {
+            let dims = ctx.graph_scalars.get(input).and_then(|v| {
                 dbg!();
                 dbg!(v.type_name());
                 let map = v.clone_cast::<rhai::Map>();
