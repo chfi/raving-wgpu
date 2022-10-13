@@ -75,19 +75,19 @@ pub struct NodeContext<'a> {
 */
 
 #[derive(Clone)]
-pub enum OutputSource<T> {
+pub enum OutputSource {
     InputPassthrough {
         input: InputName,
     },
     Allocate {
-        allocate: Arc<dyn Fn(&Graph<T>, NodeId) -> Result<Resource>>,
+        allocate: Arc<dyn Fn(&Graph, NodeId) -> Result<Resource>>,
     },
     Ref {
         resource: ResourceId,
     },
 }
 
-impl<T> std::fmt::Debug for OutputSource<T> {
+impl std::fmt::Debug for OutputSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::InputPassthrough { input } => f
@@ -109,16 +109,16 @@ pub enum LocalSocketRef {
 }
 
 #[derive(Debug, Clone)]
-pub struct OutputSocket<T> {
+pub struct OutputSocket {
     // name: OutputName,
     ty: DataType,
     link: Option<(NodeId, InputName)>,
-    source: OutputSource<T>,
+    source: OutputSource,
     resource: Option<ResourceHandle>,
 }
 
-impl<T> OutputSocket<T> {
-    pub fn buffer(source: OutputSource<T>) -> Self {
+impl OutputSocket {
+    pub fn buffer(source: OutputSource) -> Self {
         OutputSocket {
             ty: DataType::Buffer,
             link: None,
@@ -127,7 +127,7 @@ impl<T> OutputSocket<T> {
         }
     }
 
-    pub fn texture(source: OutputSource<T>) -> Self {
+    pub fn texture(source: OutputSource) -> Self {
         OutputSocket {
             ty: DataType::Texture,
             link: None,
@@ -188,28 +188,29 @@ impl LocalSocketRef {
     }
 }
 
-pub struct Node_<T> {
+pub struct Node {
     id: NodeId,
     inputs: HashMap<InputName, InputSocket>,
-    outputs: HashMap<OutputName, OutputSocket<T>>,
+    outputs: HashMap<OutputName, OutputSocket>,
 
     is_prepared: bool,
     is_ready: bool,
-    data: T,
+
+    scalar_inputs: rhai::Map,
 
     // pub bind: Option<Box<dyn BindableNode<T>>>,
-    pub execute: Option<Box<dyn ExecuteNode<T>>>,
+    pub execute: Option<Box<dyn ExecuteNode>>,
 }
 
-impl<T: std::fmt::Debug> std::fmt::Debug for Node_<T> {
+impl std::fmt::Debug for Node {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Node_")
+        f.debug_struct("Node")
             .field("id", &self.id)
             .field("inputs", &self.inputs)
             .field("outputs", &self.outputs)
             .field("is_prepared", &self.is_prepared)
             .field("is_ready", &self.is_ready)
-            .field("data", &self.data)
+            .field("scalar_inputs", &self.scalar_inputs)
             .finish()
     }
 }
@@ -222,28 +223,28 @@ pub struct ComputeShaderOp {
     pub bind_groups: Vec<BindGroup>,
 }
 
-pub trait ExecuteNode<T> {
-    fn execute(&self, graph: &Graph<T>, cmd: &mut CommandEncoder)
+pub trait ExecuteNode {
+    fn execute(&self, graph: &Graph, cmd: &mut CommandEncoder)
         -> Result<()>;
 
     fn set_bind_groups(&mut self, bind_groups: Vec<BindGroup>);
 
     fn create_bind_groups(
         &self,
-        node: &Node_<T>,
+        node: &Node,
         state: &super::State,
         resources: &[Resource],
     ) -> Result<Vec<BindGroup>>;
 }
 
-impl<T> ExecuteNode<T> for ComputeShaderOp {
+impl ExecuteNode for ComputeShaderOp {
     fn set_bind_groups(&mut self, bind_groups: Vec<BindGroup>) {
         self.bind_groups = bind_groups;
     }
 
     fn create_bind_groups(
         &self,
-        node: &Node_<T>,
+        node: &Node,
         state: &crate::State,
         resources: &[Resource],
     ) -> Result<Vec<BindGroup>> {
@@ -274,7 +275,7 @@ impl<T> ExecuteNode<T> for ComputeShaderOp {
 
     fn execute(
         &self,
-        graph: &Graph<T>,
+        graph: &Graph,
         cmd: &mut CommandEncoder,
     ) -> Result<()> {
         let mut pass =
@@ -298,8 +299,8 @@ impl<T> ExecuteNode<T> for ComputeShaderOp {
 }
 
 #[derive(Default)]
-pub struct Graph<T> {
-    pub nodes: Vec<Node_<T>>,
+pub struct Graph {
+    pub nodes: Vec<Node>,
 
     pub resources: Vec<Resource>,
 
@@ -309,10 +310,10 @@ pub struct Graph<T> {
     pub graph_inputs: rhai::Map,
 }
 
-impl<T> Graph<T> {
-    pub fn add_node(&mut self, data: T) -> NodeId {
+impl Graph {
+    pub fn add_node(&mut self) -> NodeId {
         let id = NodeId(self.nodes.len());
-        let node = Node_ {
+        let node = Node {
             id,
 
             inputs: HashMap::default(),
@@ -320,7 +321,8 @@ impl<T> Graph<T> {
 
             is_prepared: false,
             is_ready: false,
-            data,
+
+            scalar_inputs: rhai::Map::default(),
 
             // bind: None,
             execute: None,
@@ -711,14 +713,11 @@ impl<T> Graph<T> {
 pub fn example_graph(
     state: &mut super::State,
     dims: [u32; 2],
-) -> Result<Graph<()>> {
+) -> Result<Graph> {
     let mut graph = Graph::default();
-
-    // let format = TextureFormat::Bgra8Unorm
 
     let create_image = create_image_node(
         &mut graph,
-        (),
         // TextureFormat::Bgra8Unorm,
         TextureFormat::Rgba8Unorm,
         TextureUsages::COPY_DST
@@ -736,29 +735,35 @@ pub fn example_graph(
         .graph_inputs
         .insert("window_dims".into(), dims_map.into());
 
-    let compute = example_compute_node(state, &mut graph, ())?;
+    // let compute = example_compute_node(state, &mut graph, ())?;
+
+    let compute = {
+        let shader_src = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/shaders/shader.comp.spv"
+        ));
+        create_compute_node(state, &mut graph, shader_src)?
+    };
 
     let buffer_size = 512;
 
     let buffer = create_buffer_node(
         &mut graph,
-        (),
         BufferUsages::COPY_SRC | BufferUsages::STORAGE,
         buffer_size,
     );
 
     dbg!();
-    graph.link_nodes(create_image, "output", compute, "input")?;
-    graph.link_nodes(buffer, "output", compute, "buffer_in")?;
+    graph.link_nodes(create_image, "output", compute, "image")?;
+    graph.link_nodes(buffer, "output", compute, "my_buf")?;
     dbg!();
 
     Ok(graph)
 }
 
-pub fn create_compute_node<T>(
+pub fn create_compute_node(
     state: &super::State,
-    graph: &mut Graph<T>,
-    data: T,
+    graph: &mut Graph,
     shader_src: &[u8],
 ) -> Result<NodeId> {
     let mut inputs = Vec::new();
@@ -807,11 +812,12 @@ pub fn create_compute_node<T>(
 
     // not using any outputs for now
 
-    let node_id = graph.add_node(data);
+    let node_id = graph.add_node();
 
     {
         let node = &mut graph.nodes[node_id.0];
 
+        node.execute = Some(Box::new(shader_op));
         node.inputs.extend(inputs);
         // node.outputs.extend(outputs);
     }
@@ -819,12 +825,11 @@ pub fn create_compute_node<T>(
     Ok(node_id)
 }
 
-pub fn example_compute_node<T>(
+pub fn example_compute_node(
     state: &super::State,
-    graph: &mut Graph<T>,
-    data: T,
+    graph: &mut Graph,
 ) -> Result<NodeId> {
-    let node_id = graph.add_node(data);
+    let node_id = graph.add_node();
 
     let output_socket = OutputSocket::passthrough(DataType::Texture, "input");
 
@@ -880,15 +885,14 @@ pub fn example_compute_node<T>(
     Ok(node_id)
 }
 
-pub fn create_buffer_node<T>(
-    graph: &mut Graph<T>,
-    data: T,
+pub fn create_buffer_node(
+    graph: &mut Graph,
     usage: BufferUsages,
     size: usize,
 ) -> NodeId {
-    let node_id = graph.add_node(data);
+    let node_id = graph.add_node();
 
-    let output_source: OutputSource<T> = OutputSource::Allocate {
+    let output_source: OutputSource = OutputSource::Allocate {
         allocate: Arc::new(move |graph, id| {
             Ok(Resource::Buffer {
                 buffer: None,
@@ -908,19 +912,16 @@ pub fn create_buffer_node<T>(
     node_id
 }
 
-pub fn create_image_node<T>(
-    graph: &mut Graph<T>,
-    data: T,
+pub fn create_image_node(
+    graph: &mut Graph,
     format: TextureFormat,
     usage: TextureUsages,
     dims_graph_input: &str,
 ) -> NodeId {
-    use rhai::reify;
-
-    let node_id = graph.add_node(data);
+    let node_id = graph.add_node();
 
     let dims_graph_input = dims_graph_input.to_string();
-    let output_source: OutputSource<T> = OutputSource::Allocate {
+    let output_source: OutputSource = OutputSource::Allocate {
         allocate: Arc::new(move |graph, id| {
             let input = dims_graph_input.as_str();
             log::error!("dims_graph_input: {}", dims_graph_input);

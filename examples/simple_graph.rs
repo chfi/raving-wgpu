@@ -19,13 +19,9 @@ pub async fn run() -> anyhow::Result<()> {
     dbg!();
     let mut graph = raving_wgpu::graph::example_graph(&mut state, dims)?;
 
-    dbg!();
     let done = graph.prepare_node(0.into())?;
-    dbg!();
     let done = graph.prepare_node(2.into())?;
-    dbg!();
     let done = graph.prepare_node(1.into())?;
-    dbg!();
 
     graph.allocate_node_resources(&state)?;
 
