@@ -1,4 +1,4 @@
-use raving_wgpu::{State, shader::interface::PushConstants};
+use raving_wgpu::{shader::interface::PushConstants, State};
 use winit::{
     event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent},
     event_loop::ControlFlow,
@@ -25,6 +25,22 @@ pub fn main() -> anyhow::Result<()> {
 
     let mut pc: Option<PushConstants> = None;
 
+    println!(" --- entry points ---");
+
+    for entry in module.entry_points.iter() {
+        println!("{:#?}", entry);
+    }
+
+    /*
+    println!(" --- constants ---");
+
+    for (handle, cnst) in module.constants.iter() {
+        println!("{:?} - {:#?}", handle, cnst);
+    }
+    */
+
+    println!(" --- globals ---");
+
     for (handle, var) in module.global_variables.iter() {
         let ty = &module.types[var.ty];
         println!(" - {:?} -", var.name);
@@ -37,7 +53,11 @@ pub fn main() -> anyhow::Result<()> {
         if let naga::AddressSpace::PushConstant = var.space {
             println!("in push constants");
             println!("ty.inner: {:#?}", ty.inner);
-            let push = PushConstants::from_naga_struct(&module, &ty.inner, naga::ShaderStage::Compute)?;
+            let push = PushConstants::from_naga_struct(
+                &module,
+                &ty.inner,
+                naga::ShaderStage::Compute,
+            )?;
             pc = Some(push);
         }
 
@@ -61,7 +81,11 @@ pub fn main() -> anyhow::Result<()> {
         globals.push((var, ty));
     }
 
-    println!("{:#?}", pc);
+    // println!("{:#?}", pc);
+
+    // println!("---------\n\n");
+
+    // println!("{:?}", module);
 
     Ok(())
 }

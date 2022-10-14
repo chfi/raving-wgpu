@@ -17,6 +17,8 @@ pub struct ComputeShader {
 
     pub group_bindings: Vec<GroupBindings>,
     pub bind_group_layouts: Vec<wgpu::BindGroupLayout>,
+
+    pub workgroup_size: [u32; 3],
 }
 
 impl ComputeShader {
@@ -74,13 +76,21 @@ impl ComputeShader {
 
         let mut push_constants: Option<interface::PushConstants> = None;
 
+        let (workgroup_size, stage) = {
+            let entry_point = module
+                .entry_points
+                .iter()
+                .next()
+                .ok_or(anyhow!("shader entry point missing"))?;
+
+            (entry_point.workgroup_size, entry_point.stage)
+        };
+
         for (handle, var) in module.global_variables.iter() {
             if var.space == naga::AddressSpace::PushConstant {
                 let ty = &module.types[var.ty];
                 let push_const = interface::PushConstants::from_naga_struct(
-                    &module,
-                    &ty.inner,
-                    naga::ShaderStage::Compute,
+                    &module, &ty.inner, stage,
                 )?;
                 push_constants = Some(push_const);
             }
@@ -140,6 +150,7 @@ impl ComputeShader {
 
             group_bindings,
             bind_group_layouts,
+            workgroup_size,
         };
 
         Ok(compute_shader)
