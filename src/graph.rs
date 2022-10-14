@@ -230,6 +230,14 @@ pub enum NodePrepareError {
     InputSizeMissing,
     InputTextureFormatMissing,
 
+    ScalarInputMissing {
+        input: rhai::ImmutableString,
+    },
+    ScalarInputTypeMismatch {
+        input: rhai::ImmutableString,
+        type_name: String,
+    },
+
     GraphInputMissing {
         graph_input: rhai::ImmutableString,
     },
@@ -268,6 +276,19 @@ impl std::fmt::Display for NodePrepareError {
             NodePrepareError::InputTextureFormatMissing => {
                 write!(f, "Resource exture format not found on linked input")
             }
+            NodePrepareError::ScalarInputMissing { input } => {
+                write!(f, "Node scalar input `{}` not found", input)
+            }
+            NodePrepareError::ScalarInputTypeMismatch {
+                input,
+                type_name,
+            } => {
+                write!(
+                    f,
+                    "Node scalar input `{}` type mismatch: was `{}`",
+                    input, type_name
+                )
+            }
             NodePrepareError::GraphInputMissing { graph_input } => {
                 write!(f, "Graph scalar input `{}` not found", graph_input)
             }
@@ -290,9 +311,39 @@ impl std::fmt::Display for NodePrepareError {
 
 impl std::error::Error for NodePrepareError {}
 
-// impl From<> for
 
 impl<'a> NodeResourceCtx<'a> {
+    pub fn node_scalar_input(
+        &self,
+        key: &str,
+    ) -> std::result::Result<&rhai::Dynamic, NodePrepareError> {
+        self.node.scalar_inputs.get(key).ok_or_else(|| {
+            NodePrepareError::ScalarInputMissing {
+                input: key.into(),
+            }
+        })
+    }
+    
+
+    pub fn node_scalar_input_cast<T>(
+        &self,
+        key: &str,
+    ) -> std::result::Result<T, NodePrepareError>
+    where
+        T: Clone + std::any::Any,
+    {
+        let value = self.node_scalar_input(key)?;
+
+        if value.type_id() != std::any::TypeId::of::<T>() {
+            return Err(NodePrepareError::ScalarInputTypeMismatch {
+                input: key.into(),
+                type_name: value.type_name().to_string(),
+            });
+        }
+
+        Ok(value.clone_cast())
+    }
+
     pub fn graph_input(
         &self,
         key: &str,
@@ -494,6 +545,12 @@ pub struct ComputeShaderOp {
 pub trait ExecuteNode {
     fn execute(&self, graph: &Graph, cmd: &mut CommandEncoder) -> Result<()>;
 
+    // fn prepare(&self,
+    //     state: &super::State,
+    //     node: &Node,
+    //     resources: &[Resource],
+    // ) -> Result<()>;
+
     fn set_bind_groups(&mut self, bind_groups: Vec<BindGroup>);
 
     fn create_bind_groups(
@@ -505,6 +562,7 @@ pub trait ExecuteNode {
 }
 
 impl ExecuteNode for ComputeShaderOp {
+    
     fn set_bind_groups(&mut self, bind_groups: Vec<BindGroup>) {
         self.bind_groups = bind_groups;
     }
