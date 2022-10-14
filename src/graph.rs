@@ -1093,66 +1093,6 @@ pub fn create_compute_node(
     Ok(node_id)
 }
 
-pub fn example_compute_node(
-    state: &super::State,
-    graph: &mut Graph,
-) -> Result<NodeId> {
-    let node_id = graph.add_node();
-
-    let output_socket = OutputSocket::passthrough(DataType::Texture, "input");
-
-    let input_socket = InputSocket {
-        ty: DataType::Texture,
-        link: None,
-        resource: None,
-    };
-
-    let shader_op = {
-        let shader_src = include_bytes!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/shaders/shader.comp.spv"
-        ));
-
-        let shader = crate::shader::ComputeShader::from_spirv(
-            state, shader_src, "main",
-        )?;
-
-        log::error!("shader!! {:#?}", shader);
-
-        let shader = Arc::new(shader);
-
-        let mut resource_map = HashMap::default();
-
-        resource_map.insert("image".into(), LocalSocketRef::input("input"));
-        resource_map
-            .insert("my_buf".into(), LocalSocketRef::input("buffer_in"));
-
-        ComputeShaderOp {
-            shader,
-            resource_map,
-            bind_groups: Vec::new(),
-        }
-    };
-
-    {
-        let node = &mut graph.nodes[node_id.0];
-        node.inputs.insert("input".into(), input_socket);
-        node.inputs.insert(
-            "buffer_in".into(),
-            InputSocket {
-                ty: DataType::Buffer,
-                link: None,
-                resource: None,
-            },
-        );
-        node.outputs.insert("output".into(), output_socket);
-
-        node.execute = Some(Box::new(shader_op));
-    }
-
-    Ok(node_id)
-}
-
 pub fn create_buffer_node(
     graph: &mut Graph,
     usage: BufferUsages,
