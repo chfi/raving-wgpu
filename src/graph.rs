@@ -97,7 +97,9 @@ impl std::fmt::Debug for OutputSource {
                 .debug_struct("InputPassthrough")
                 .field("input", input)
                 .finish(),
-            Self::PrepareAllocation { prepare } => f.debug_struct("PrepareAllocation").finish(),
+            Self::PrepareAllocation { prepare } => {
+                f.debug_struct("PrepareAllocation").finish()
+            }
             // Self::Allocate { allocate } => f.debug_struct("Allocate").finish(),
             Self::Ref { resource } => {
                 f.debug_struct("Ref").field("resource", resource).finish()
@@ -212,16 +214,129 @@ pub struct NodeResourceCtx<'a> {
     node: &'a Node,
 }
 
+#[derive(Debug, Clone)]
 pub enum NodePrepareError {
-    InputDoesNotExist { input_name: InputName },
-    InputUnlinked { input_name: InputName },
-    InputTypeMismatch { was: DataType, expected: DataType },
+    InputDoesNotExist {
+        input_name: InputName,
+    },
+    InputUnlinked {
+        input_name: InputName,
+    },
+    InputTypeMismatch {
+        was: DataType,
+        expected: DataType,
+    },
 
     InputSizeMissing,
     InputTextureFormatMissing,
+
+    GraphInputMissing {
+        graph_input: rhai::ImmutableString,
+    },
+    GraphInputTypeMismatch {
+        graph_input: rhai::ImmutableString,
+        type_name: String,
+    },
+    GraphInputError {
+        msg: String,
+    },
 }
 
+impl std::fmt::Display for NodePrepareError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NodePrepareError::InputDoesNotExist { input_name } => {
+                write!(f, "Node input socket `{}` not found", input_name)
+            }
+            NodePrepareError::InputUnlinked { input_name } => {
+                write!(
+                    f,
+                    "Node input `{}` not linked to a neighbor",
+                    input_name
+                )
+            }
+            NodePrepareError::InputTypeMismatch { was, expected } => {
+                write!(
+                    f,
+                    "Node input socket was type {:?}, expected {:?}",
+                    was, expected
+                )
+            }
+            NodePrepareError::InputSizeMissing => {
+                write!(f, "Resource size not found on linked input")
+            }
+            NodePrepareError::InputTextureFormatMissing => {
+                write!(f, "Resource exture format not found on linked input")
+            }
+            NodePrepareError::GraphInputMissing { graph_input } => {
+                write!(f, "Graph scalar input `{}` not found", graph_input)
+            }
+            NodePrepareError::GraphInputTypeMismatch {
+                graph_input,
+                type_name,
+            } => {
+                write!(
+                    f,
+                    "Graph scalar input `{}` type mismatch: was `{}`",
+                    graph_input, type_name
+                )
+            }
+            NodePrepareError::GraphInputError { msg } => {
+                write!(f, "{}", msg)
+            }
+        }
+    }
+}
+
+impl std::error::Error for NodePrepareError {}
+
+// impl From<> for
+
 impl<'a> NodeResourceCtx<'a> {
+    pub fn graph_input(
+        &self,
+        key: &str,
+    ) -> std::result::Result<&rhai::Dynamic, NodePrepareError> {
+        self.graph_scalars.get(key).ok_or_else(|| {
+            NodePrepareError::GraphInputMissing {
+                graph_input: key.into(),
+            }
+        })
+    }
+
+    pub fn graph_input_cast<T>(
+        &self,
+        key: &str,
+    ) -> std::result::Result<T, NodePrepareError>
+    where
+        T: Clone + std::any::Any,
+    {
+        let value = self.graph_input(key)?;
+
+        if value.type_id() != std::any::TypeId::of::<T>() {
+            return Err(NodePrepareError::GraphInputTypeMismatch {
+                graph_input: key.into(),
+                type_name: value.type_name().to_string(),
+            });
+        }
+
+        Ok(value.clone_cast())
+    }
+
+    /// Helper method for extracting several keys from a map
+    /// stored as a graph input
+    pub fn graph_input_inner_keys<'b>(
+        &self,
+        map_key: &str,
+        inner_keys: impl IntoIterator<Item = &'b str>,
+    ) -> std::result::Result<Vec<&rhai::Dynamic>, NodePrepareError> {
+        let mut result = Vec::new();
+
+        // let map = graph_input
+
+        Ok(result)
+    }
+
     pub fn input_resource(
         &self,
         input_name: &str,
@@ -646,8 +761,8 @@ impl Graph {
                         output_resources.push((output_name.clone(), resource));
                     }
                     // OutputSource::Allocate { allocate } => {
-                        // let resource = allocate(&self, id)?;
-                        // output_resources.push((output_name.clone(), resource));
+                    // let resource = allocate(&self, id)?;
+                    // output_resources.push((output_name.clone(), resource));
                     // }
                     OutputSource::Ref { resource } => {
                         //
