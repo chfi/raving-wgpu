@@ -329,10 +329,52 @@ impl<'a> NodeResourceCtx<'a> {
         &self,
         map_key: &str,
         inner_keys: impl IntoIterator<Item = &'b str>,
-    ) -> std::result::Result<Vec<&rhai::Dynamic>, NodePrepareError> {
+    ) -> std::result::Result<Vec<rhai::Dynamic>, NodePrepareError> {
         let mut result = Vec::new();
 
-        // let map = graph_input
+        let map = self.graph_input_cast::<rhai::Map>(map_key)?;
+
+        for key in inner_keys {
+            let value = map.get(key).ok_or_else(|| {
+                NodePrepareError::GraphInputError {
+                    msg: format!("Inner key `{key}` missing"),
+                }
+            })?;
+            result.push(value.clone());
+        }
+
+        Ok(result)
+    }
+
+    pub fn graph_input_inner_keys_cast<'b, T>(
+        &self,
+        map_key: &str,
+        inner_keys: impl IntoIterator<Item = &'b str>,
+    ) -> std::result::Result<Vec<T>, NodePrepareError>
+    where
+        T: Clone + std::any::Any,
+    {
+        let mut result = Vec::new();
+
+        let map = self.graph_input_cast::<rhai::Map>(map_key)?;
+
+        for key in inner_keys {
+            let value = map.get(key).ok_or_else(|| {
+                NodePrepareError::GraphInputError {
+                    msg: format!("Child `{map_key}.{key}` missing"),
+                }
+            })?;
+
+            if value.type_id() != std::any::TypeId::of::<T>() {
+                return Err(NodePrepareError::GraphInputError {
+                    msg: format!(
+                        "Child `{map_key}.{key}` type mismatch: was {}",
+                        value.type_name(),
+                    ),
+                });
+            }
+            result.push(value.clone_cast());
+        }
 
         Ok(result)
     }
@@ -1150,36 +1192,16 @@ pub fn create_image_node(
     let output_source: OutputSource = OutputSource::PrepareAllocation {
         prepare: Arc::new(move |ctx| {
             let input = dims_graph_input.as_str();
-            log::error!("dims_graph_input: {}", dims_graph_input);
 
-            let dims = ctx.graph_scalars.get(input).and_then(|v| {
-                dbg!();
-                dbg!(v.type_name());
-                let map = v.clone_cast::<rhai::Map>();
-                let x = map.get("x")?.clone();
-                let y = map.get("y")?.clone();
+            let dims =
+                ctx.graph_input_inner_keys_cast::<i64>(input, ["x", "y"])?;
 
-                let x = x.as_int().ok()?;
-                let y = y.as_int().ok()?;
-
-                Some([x as u32, y as u32])
-            });
-
-            log::error!("dims is: {:?}", dims);
-            let dims = if let Some(dims) = dims {
-                dims
-            } else {
-                anyhow::bail!(
-                    "Error initializing image node:\
-                key `{}` not found in graph inputs, or value\
-                was not a map with integer `x` and `y` fields",
-                    input
-                );
-            };
+            let x = dims[0] as u32;
+            let y = dims[1] as u32;
 
             let resource = Resource::Texture {
                 texture: None,
-                size: Some(dims),
+                size: Some([x, y]),
                 format: Some(format),
                 usage,
             };
