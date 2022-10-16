@@ -7,6 +7,10 @@ use std::{
     sync::Arc,
 };
 
+pub mod dfrog;
+
+use crate::shader::interface::PushConstants;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct NodeId(usize);
@@ -279,10 +283,7 @@ impl std::fmt::Display for NodePrepareError {
             NodePrepareError::ScalarInputMissing { input } => {
                 write!(f, "Node scalar input `{}` not found", input)
             }
-            NodePrepareError::ScalarInputTypeMismatch {
-                input,
-                type_name,
-            } => {
+            NodePrepareError::ScalarInputTypeMismatch { input, type_name } => {
                 write!(
                     f,
                     "Node scalar input `{}` type mismatch: was `{}`",
@@ -311,19 +312,15 @@ impl std::fmt::Display for NodePrepareError {
 
 impl std::error::Error for NodePrepareError {}
 
-
 impl<'a> NodeResourceCtx<'a> {
     pub fn node_scalar_input(
         &self,
         key: &str,
     ) -> std::result::Result<&rhai::Dynamic, NodePrepareError> {
         self.node.scalar_inputs.get(key).ok_or_else(|| {
-            NodePrepareError::ScalarInputMissing {
-                input: key.into(),
-            }
+            NodePrepareError::ScalarInputMissing { input: key.into() }
         })
     }
-    
 
     pub fn node_scalar_input_cast<T>(
         &self,
@@ -540,10 +537,17 @@ pub struct ComputeShaderOp {
     resource_map: HashMap<String, LocalSocketRef>,
 
     pub bind_groups: Vec<BindGroup>,
+
+    push_constants: Option<PushConstants>,
 }
 
 pub trait ExecuteNode {
-    fn execute(&self, graph: &Graph, cmd: &mut CommandEncoder) -> Result<()>;
+    // fn execute(&self, graph: &Graph, cmd: &mut CommandEncoder) -> Result<()>;
+    fn execute(
+        &self,
+        ctx: &NodeResourceCtx<'_>,
+        cmd: &mut CommandEncoder,
+    ) -> Result<()>;
 
     // fn prepare(&self,
     //     state: &super::State,
@@ -562,7 +566,6 @@ pub trait ExecuteNode {
 }
 
 impl ExecuteNode for ComputeShaderOp {
-    
     fn set_bind_groups(&mut self, bind_groups: Vec<BindGroup>) {
         self.bind_groups = bind_groups;
     }
@@ -598,7 +601,12 @@ impl ExecuteNode for ComputeShaderOp {
             .create_bind_groups_impl(state, resources, &binding_map)
     }
 
-    fn execute(&self, graph: &Graph, cmd: &mut CommandEncoder) -> Result<()> {
+    // fn execute(&self, graph: &Graph, cmd: &mut CommandEncoder) -> Result<()> {
+    fn execute(
+        &self,
+        ctx: &NodeResourceCtx<'_>,
+        cmd: &mut CommandEncoder,
+    ) -> Result<()> {
         let mut pass =
             cmd.begin_compute_pass(&ComputePassDescriptor { label: None });
 
@@ -607,6 +615,8 @@ impl ExecuteNode for ComputeShaderOp {
         for (ix, group) in self.bind_groups.iter().enumerate() {
             pass.set_bind_group(ix as u32, group, &[]);
         }
+
+        let [x, y, z] = self.shader.workgroup_size;
 
         // TODO figure out dispatch group counts
         let x_groups = 4;
@@ -632,6 +642,21 @@ pub struct Graph {
 }
 
 impl Graph {
+    pub fn execute_node(
+        &self,
+        id: NodeId,
+        cmd: &mut CommandEncoder,
+    ) -> Result<()> {
+        let node = &self.nodes[id.0];
+
+        if let Some(exec) = &node.execute {
+            let ctx = NodeResourceCtx::from_id(&self, id);
+            exec.execute(&ctx, cmd)?;
+        }
+
+        Ok(())
+    }
+
     pub fn add_node(&mut self) -> NodeId {
         let id = NodeId(self.nodes.len());
         let node = Node {
@@ -1069,7 +1094,14 @@ pub fn example_graph(
             env!("CARGO_MANIFEST_DIR"),
             "/shaders/shader.comp.spv"
         ));
-        create_compute_node(state, &mut graph, shader_src)?
+        let compute = create_compute_node(state, &mut graph, shader_src)?;
+
+        // {
+        //     let mut node = 
+        // }
+
+        
+        compute
     };
 
     let buffer_size = 512;
@@ -1129,10 +1161,13 @@ pub fn create_compute_node(
             }
         }
 
+        let push_constants = shader.clone_push_constants();
+
         ComputeShaderOp {
             shader,
             resource_map,
             bind_groups: Vec::new(),
+            push_constants,
         }
     };
 

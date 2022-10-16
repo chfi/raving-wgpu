@@ -18,9 +18,17 @@ layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 void main() {
   ivec2 xy = ivec2(gl_GlobalInvocationID.xy);
 
-  if (xy.x < 32) {
-    my_buf.data[xy.x] = 255;
+  if (xy.x == 0) {
+    my_buf.data[xy.x] = inputs.img_width;
+  } else if (xy.x == 1) {
+    my_buf.data[xy.x] = inputs.img_height;
+  } else if (xy.x < 32) {
+    my_buf.data[xy.x] = xy.x;
   }
+
+  // if (xy.x < 32) {
+    // my_buf.data[xy.x] = 255;
+  // }
 
   // if (xy.x >= 512) {
     // return;

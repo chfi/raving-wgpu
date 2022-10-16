@@ -55,9 +55,11 @@ pub async fn run() -> anyhow::Result<()> {
                 label: Some("Render Encoder"),
             });
 
-    if let Some(e) = graph.nodes[1].execute.as_ref() {
-        e.execute(&graph, &mut encoder)?;
-    }
+    graph.execute_node(NodeId::from(1), &mut encoder)?;
+    // if let Some(e) = graph.nodes[1].execute.as_ref() {
+        // e.execute
+        // e.execute(&graph, &mut encoder)?;
+    // }
 
     let output = state.surface.get_current_texture()?;
 
@@ -143,7 +145,9 @@ pub async fn run() -> anyhow::Result<()> {
         }
     }
     let range = dst_buf.slice(..).get_mapped_range();
+    let u32_range: &[u32] = bytemuck::cast_slice(&range[0..256]);
     log::error!("range[0..32] = {:?}", &range[0..32]);
+    log::error!("u32_range: {:?}", u32_range);
 
     dbg!();
     output.present();
