@@ -79,8 +79,6 @@ impl ComputeShader {
         let group_bindings = GroupBindings::from_spirv(&module)?;
         log::error!("group bindings: {:#?}", group_bindings);
 
-        let mut bind_group_layouts = Vec::new();
-
         let (workgroup_size, stage) = {
             let entry_point = module
                 .entry_points
@@ -105,25 +103,11 @@ impl ComputeShader {
             })
             .transpose()?;
 
-        let mut expected_group = 0;
-
-        for bindings in group_bindings.iter() {
-            let group_ix = bindings.group_ix;
-
-            // Group indices both have to be compact and sorted
-            if expected_group != group_ix {
-                anyhow::bail!(
-                    "Missing group index: Expected {}, but saw {}",
-                    expected_group,
-                    group_ix
-                );
-            }
-
-            let bind_group_layout = bindings.create_bind_group_layout(state);
-            bind_group_layouts.push(bind_group_layout);
-
-            expected_group += 1;
-        }
+        let bind_group_layouts =
+            GroupBindings::create_bind_group_layouts_checked(
+                &group_bindings,
+                state,
+            )?;
 
         let layout_refs = bind_group_layouts.iter().collect::<Vec<_>>();
 

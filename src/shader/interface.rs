@@ -17,6 +17,32 @@ pub struct GroupBindings {
 }
 
 impl GroupBindings {
+
+    pub fn create_bind_groups(
+        group_bindings: &[Self],
+        state: &crate::State,
+        bind_group_layouts: &[wgpu::BindGroupLayout],
+        resources: &[crate::graph::Resource],
+        resource_map: &HashMap<String, crate::graph::ResourceId>,
+    ) -> Result<Vec<wgpu::BindGroup>> {
+        let mut bind_groups = Vec::new();
+
+        for bindings in group_bindings.iter() {
+            let ix = bindings.group_ix as usize;
+            let layout = &bind_group_layouts[ix];
+
+            let bind_group = bindings.create_bind_group(
+                state,
+                layout,
+                resources,
+                resource_map,
+            )?;
+            bind_groups.push(bind_group);
+        }
+
+        Ok(bind_groups)
+    }
+
     pub fn create_bind_group(
         &self,
         state: &crate::State,
@@ -74,6 +100,35 @@ impl GroupBindings {
         });
 
         Ok(bind_group)
+    }
+
+    /// intended for use when creating all the bind group layouts
+    /// for a single shader at once
+    pub fn create_bind_group_layouts_checked(
+        group_bindings: &[Self],
+        state: &crate::State,
+    ) -> Result<Vec<wgpu::BindGroupLayout>> {
+        let mut bind_group_layouts = Vec::new();
+        let mut expected_group = 0;
+
+        for bindings in group_bindings.iter() {
+            let group_ix = bindings.group_ix;
+
+            // Group indices both have to be compact and sorted
+            if expected_group != group_ix {
+                anyhow::bail!(
+                    "Missing group index: Expected {}, but saw {}",
+                    expected_group,
+                    group_ix
+                );
+            }
+
+            let bind_group_layout = bindings.create_bind_group_layout(state);
+            bind_group_layouts.push(bind_group_layout);
+
+            expected_group += 1;
+        }
+        Ok(bind_group_layouts)
     }
 
     pub fn create_bind_group_layout(

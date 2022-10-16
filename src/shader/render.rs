@@ -18,6 +18,12 @@ pub struct VertexInput {
     pub format: VertexFormat,
 }
 
+impl VertexInput {
+    pub fn size(&self) -> u64 {
+        self.format.size()
+    }
+}
+
 #[derive(Debug)]
 pub struct VertexShader {
     pub shader_module: wgpu::ShaderModule,
@@ -32,6 +38,7 @@ pub struct VertexShader {
 }
 
 impl VertexShader {
+
     pub fn from_spirv(
         state: &crate::State,
         shader_src: &[u8],
@@ -116,28 +123,12 @@ impl VertexShader {
         vertex_inputs.sort_by_key(|v| v.location);
 
         log::warn!("vertex inputs: {:#?}", vertex_inputs);
-
-        let mut bind_group_layouts = Vec::new();
         
-        let mut expected_group = 0;
-
-        for bindings in group_bindings.iter() {
-            let group_ix = bindings.group_ix;
-
-            // Group indices both have to be compact and sorted
-            if expected_group != group_ix {
-                anyhow::bail!(
-                    "Missing group index: Expected {}, but saw {}",
-                    expected_group,
-                    group_ix
-                );
-            }
-
-            let bind_group_layout = bindings.create_bind_group_layout(state);
-            bind_group_layouts.push(bind_group_layout);
-
-            expected_group += 1;
-        }
+        let bind_group_layouts =
+            GroupBindings::create_bind_group_layouts_checked(
+                &group_bindings,
+                state,
+            )?;
 
         Ok(VertexShader {
             shader_module,

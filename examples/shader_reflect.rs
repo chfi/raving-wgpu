@@ -1,4 +1,4 @@
-use raving_wgpu::{shader::interface::PushConstants, State};
+use raving_wgpu::{shader::{interface::PushConstants, render::VertexShader}, State};
 use winit::{
     event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent},
     event_loop::ControlFlow,
@@ -102,6 +102,7 @@ pub fn main() -> anyhow::Result<()> {
     // compute();
     vertex();
     // fragment();
+
 
     Ok(())
 }
