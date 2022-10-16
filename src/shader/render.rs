@@ -11,11 +11,24 @@ use crate::{shader::interface::GroupBindings, ResourceId};
 
 use super::*;
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct VertexInput {
+    pub name: String,
+    pub location: u32,
+    pub format: VertexFormat,
+}
+
+#[derive(Debug)]
 pub struct VertexShader {
+    pub shader_module: wgpu::ShaderModule,
+    pub entry_point: naga::EntryPoint,
+
+    pub vertex_inputs: Vec<VertexInput>,
+
     pub group_bindings: Vec<GroupBindings>,
     pub bind_group_layouts: Vec<wgpu::BindGroupLayout>,
 
-    push_constants: Option<interface::PushConstants>,
+    pub push_constants: Option<interface::PushConstants>,
 }
 
 impl VertexShader {
@@ -64,28 +77,100 @@ impl VertexShader {
             })
             .transpose()?;
 
+        // add vertex inputs
+
+        let mut vertex_inputs = Vec::new();
+
         for arg in entry_point.function.arguments.iter() {
             if let Some(binding) = arg.binding.as_ref() {
-                match binding {
-                    naga::Binding::BuiltIn(_) => {
-                        todo!();
-                        //
-                    }
-                    naga::Binding::Location {
-                        location,
-                        interpolation,
-                        sampling,
-                    } => {
-                        todo!();
+                let location =
+                    if let naga::Binding::Location { location, .. } = binding {
+                        *location
+                    } else {
+                        continue;
+                    };
 
-                        // build the vector input interface here
+                let (size, kind, width) = match &naga_mod.types[arg.ty].inner {
+                    naga::TypeInner::Scalar { kind, width } => {
+                        (None, *kind, *width)
                     }
+                    naga::TypeInner::Vector { size, kind, width } => {
+                        (Some(*size), *kind, *width)
+                    }
+                    other => {
+                        panic!("unsupported vertex type: {:?}", other);
+                    }
+                };
+
+                if let Some(format) = naga_to_wgpu_vertex_format(size, kind, width) {
+                    let input = VertexInput {
+                        name: arg.name.clone().unwrap_or_default(),
+                        location,
+                        format,
+                    };
+                    vertex_inputs.push(input);
                 }
             }
-
-            //
         }
 
-        todo!();
+        vertex_inputs.sort_by_key(|v| v.location);
+
+        log::warn!("vertex inputs: {:#?}", vertex_inputs);
+
+        let mut bind_group_layouts = Vec::new();
+        
+        let mut expected_group = 0;
+
+        for bindings in group_bindings.iter() {
+            let group_ix = bindings.group_ix;
+
+            // Group indices both have to be compact and sorted
+            if expected_group != group_ix {
+                anyhow::bail!(
+                    "Missing group index: Expected {}, but saw {}",
+                    expected_group,
+                    group_ix
+                );
+            }
+
+            let bind_group_layout = bindings.create_bind_group_layout(state);
+            bind_group_layouts.push(bind_group_layout);
+
+            expected_group += 1;
+        }
+
+        Ok(VertexShader {
+            shader_module,
+            entry_point: entry_point.clone(),
+            vertex_inputs,
+            group_bindings,
+            bind_group_layouts,
+            push_constants,
+        })
+    }
+}
+
+fn naga_to_wgpu_vertex_format(
+    vec_size: Option<naga::VectorSize>,
+    kind: naga::ScalarKind,
+    width: u8,
+) -> Option<wgpu::VertexFormat> {
+    use naga::VectorSize as Size;
+    use naga::ScalarKind as Kind;
+    use wgpu::VertexFormat as Vx;
+    match (vec_size, kind, width) {
+        (None, Kind::Float, 4) => Some(Vx::Float32),
+        (Some(Size::Bi), Kind::Float, 4) => Some(Vx::Float32x2),
+        (Some(Size::Tri), Kind::Float, 4) => Some(Vx::Float32x3),
+        (Some(Size::Quad), Kind::Float, 4) => Some(Vx::Float32x4),
+        (None, Kind::Sint, 4) => Some(Vx::Sint32),
+        (Some(Size::Bi), Kind::Sint, 4) => Some(Vx::Sint32x2),
+        (Some(Size::Tri), Kind::Sint, 4) => Some(Vx::Sint32x3),
+        (Some(Size::Quad), Kind::Sint, 4) => Some(Vx::Sint32x4),
+        (None, Kind::Uint, 4) => Some(Vx::Uint32),
+        (Some(Size::Bi), Kind::Uint, 4) => Some(Vx::Uint32x2),
+        (Some(Size::Tri), Kind::Uint, 4) => Some(Vx::Uint32x3),
+        (Some(Size::Quad), Kind::Uint, 4) => Some(Vx::Uint32x4),
+        _ => None,
     }
 }
