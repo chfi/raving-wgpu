@@ -10,6 +10,7 @@ use std::{
 use crate::{shader::interface::GroupBindings, ResourceId};
 
 pub mod interface;
+pub mod render;
 
 #[derive(Debug)]
 pub struct ComputeShader {
@@ -24,7 +25,6 @@ pub struct ComputeShader {
 }
 
 impl ComputeShader {
-
     pub fn clone_push_constants(&self) -> Option<interface::PushConstants> {
         self.push_constants.clone()
     }
@@ -81,8 +81,6 @@ impl ComputeShader {
 
         let mut bind_group_layouts = Vec::new();
 
-        let mut push_constants: Option<interface::PushConstants> = None;
-
         let (workgroup_size, stage) = {
             let entry_point = module
                 .entry_points
@@ -93,15 +91,19 @@ impl ComputeShader {
             (entry_point.workgroup_size, entry_point.stage)
         };
 
-        for (handle, var) in module.global_variables.iter() {
-            if var.space == naga::AddressSpace::PushConstant {
-                let ty = &module.types[var.ty];
-                let push_const = interface::PushConstants::from_naga_struct(
-                    &module, &ty.inner, stage,
-                )?;
-                push_constants = Some(push_const);
-            }
-        }
+        let push_constants = module
+            .global_variables
+            .iter()
+            .find_map(|(_handle, var)| {
+                (var.space == naga::AddressSpace::PushConstant).then(|| {
+                    interface::PushConstants::from_naga_struct(
+                        &module,
+                        &module.types[var.ty].inner,
+                        stage,
+                    )
+                })
+            })
+            .transpose()?;
 
         let mut expected_group = 0;
 

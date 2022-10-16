@@ -4,14 +4,7 @@ use winit::{
     event_loop::ControlFlow,
 };
 
-pub fn main() -> anyhow::Result<()> {
-    env_logger::init();
-
-    let shader_src = include_bytes!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/shaders/shader.comp.spv"
-    ));
-
+fn load_shader(shader_src: &[u8]) -> anyhow::Result<()> {
     let module = naga::front::spv::parse_u8_slice(
         shader_src,
         &naga::front::spv::Options {
@@ -21,8 +14,6 @@ pub fn main() -> anyhow::Result<()> {
         },
     )?;
 
-    let mut globals: Vec<(&naga::GlobalVariable, &naga::Type)> = Vec::new();
-
     let mut pc: Option<PushConstants> = None;
 
     println!(" --- entry points ---");
@@ -31,13 +22,11 @@ pub fn main() -> anyhow::Result<()> {
         println!("{:#?}", entry);
     }
 
-    /*
     println!(" --- constants ---");
 
     for (handle, cnst) in module.constants.iter() {
         println!("{:?} - {:#?}", handle, cnst);
     }
-    */
 
     println!(" --- globals ---");
 
@@ -64,7 +53,6 @@ pub fn main() -> anyhow::Result<()> {
         if let naga::TypeInner::Struct { members, .. } = &ty.inner {
             for mem in members {
                 let mem_ty = &module.types[mem.ty];
-                /*
                 println!(
                     "member: {:?} - {:#?}\n{:?} - {:?}",
                     mem,
@@ -72,20 +60,48 @@ pub fn main() -> anyhow::Result<()> {
                     mem_ty.inner.scalar_kind(),
                     mem_ty.inner.size(&module.constants),
                 );
-                */
             }
         }
-
-        // println!(" ")
-
-        globals.push((var, ty));
     }
 
-    // println!("{:#?}", pc);
+    println!("{:#?}", module);
 
-    // println!("---------\n\n");
+    Ok(())
+}
 
-    // println!("{:?}", module);
+fn compute() -> anyhow::Result<()> {
+    let shader_src = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/shaders/shader.comp.spv"
+    ));
+
+    load_shader(shader_src)
+}
+
+fn vertex() -> anyhow::Result<()> {
+    let shader_src = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/shaders/shader.vert.spv"
+    ));
+
+    load_shader(shader_src)
+}
+
+fn fragment() -> anyhow::Result<()> {
+    let shader_src = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/shaders/shader.frag.spv"
+    ));
+
+    load_shader(shader_src)
+}
+
+pub fn main() -> anyhow::Result<()> {
+    env_logger::init();
+
+    // compute();
+    vertex();
+    // fragment();
 
     Ok(())
 }
