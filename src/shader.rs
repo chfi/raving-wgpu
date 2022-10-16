@@ -19,9 +19,16 @@ pub struct ComputeShader {
     pub bind_group_layouts: Vec<wgpu::BindGroupLayout>,
 
     pub workgroup_size: [u32; 3],
+
+    push_constants: Option<interface::PushConstants>,
 }
 
 impl ComputeShader {
+
+    pub fn clone_push_constants(&self) -> Option<interface::PushConstants> {
+        self.push_constants.clone()
+    }
+
     pub fn create_bind_groups_impl(
         &self,
         state: &super::State,
@@ -118,7 +125,7 @@ impl ComputeShader {
 
         let layout_refs = bind_group_layouts.iter().collect::<Vec<_>>();
 
-        let push_constant_ranges = if let Some(p) = push_constants {
+        let push_constant_ranges = if let Some(p) = &push_constants {
             dbg!();
             vec![p.to_range(wgpu::ShaderStages::COMPUTE)]
         } else {
@@ -151,6 +158,8 @@ impl ComputeShader {
             group_bindings,
             bind_group_layouts,
             workgroup_size,
+
+            push_constants,
         };
 
         Ok(compute_shader)
