@@ -3,13 +3,19 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use anyhow::Result;
-use raving_wgpu::NodeId;
+use raving_wgpu::{
+    shader::render::{
+        FragmentShader, FragmentShaderInstance, GraphicsPipeline, VertexShader,
+        VertexShaderInstance,
+    },
+    NodeId,
+};
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
     BufferUsages, Extent3d, ImageCopyTexture, Origin3d,
 };
 
-pub async fn run() -> anyhow::Result<()> {
+pub async fn run_compute() -> anyhow::Result<()> {
     let (event_loop, window, mut state) = raving_wgpu::initialize().await?;
 
     let size = window.inner_size();
@@ -57,8 +63,8 @@ pub async fn run() -> anyhow::Result<()> {
 
     graph.execute_node(NodeId::from(1), &mut encoder)?;
     // if let Some(e) = graph.nodes[1].execute.as_ref() {
-        // e.execute
-        // e.execute(&graph, &mut encoder)?;
+    // e.execute
+    // e.execute(&graph, &mut encoder)?;
     // }
 
     let output = state.surface.get_current_texture()?;
@@ -150,13 +156,13 @@ pub async fn run() -> anyhow::Result<()> {
     log::error!("u32_range: {:?}", u32_range);
 
     dbg!();
+
     output.present();
-    dbg!();
     state.device.poll(wgpu::Maintain::Wait);
 
     // use raving_wgpu::shader::interface::GroupBindings;
 
-    // std::thread::sleep(std::time::Duration::from_millis(2000));
+    std::thread::sleep(std::time::Duration::from_millis(2000));
 
     /*
     event_loop.run(move |event, _, control_flow| {
@@ -192,6 +198,52 @@ pub async fn run() -> anyhow::Result<()> {
         }
     });
     */
+
+    Ok(())
+}
+
+pub async fn run() -> anyhow::Result<()> {
+    let (event_loop, window, mut state) = raving_wgpu::initialize().await?;
+
+    dbg!();
+    let size = window.inner_size();
+
+    let dims = [size.width, size.height];
+
+    dbg!();
+    let vert_src = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/shaders/shader.vert.spv"
+    ));
+
+    dbg!();
+    let vert = VertexShader::from_spirv(&state, vert_src, "main")?;
+
+    dbg!();
+    let frag_src = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/shaders/uv_rb.frag.spv"
+    ));
+
+    dbg!();
+    let frag = FragmentShader::from_spirv(&state, frag_src, "main")?;
+
+    let vert = Arc::new(vert);
+    let frag = Arc::new(frag);
+
+    // vertices are (vec3 pos, vec2 uv)
+
+    let vert_inst = VertexShaderInstance::from_shader_single_buffer(
+        &vert,
+        wgpu::VertexStepMode::Vertex,
+    );
+    dbg!();
+
+    let frag_inst = FragmentShaderInstance::from_shader(&frag)?;
+    dbg!();
+
+    let graphics = GraphicsPipeline::new(&state, vert_inst, frag_inst)?;
+    dbg!();
 
     Ok(())
 }

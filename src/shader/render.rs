@@ -15,8 +15,8 @@ use super::{interface::PushConstants, *};
 
 #[derive(Debug)]
 pub struct GraphicsPipeline {
-    pub vertex: Arc<VertexShaderInstance>,
-    pub fragment: Arc<FragmentShaderInstance>,
+    pub vertex: VertexShaderInstance,
+    pub fragment: FragmentShaderInstance,
 
     pipeline_layout: wgpu::PipelineLayout,
     pipeline: wgpu::RenderPipeline,
@@ -26,8 +26,8 @@ pub struct GraphicsPipeline {
 impl GraphicsPipeline {
     pub fn new(
         state: &crate::State,
-        vertex: &Arc<VertexShaderInstance>,
-        fragment: &Arc<FragmentShaderInstance>,
+        vertex: VertexShaderInstance,
+        fragment: FragmentShaderInstance,
     ) -> Result<Self> {
         let vertex_buffers = vertex.create_buffer_layouts();
         let vertex_state = vertex.create_vertex_state(&vertex_buffers);
@@ -112,9 +112,6 @@ impl GraphicsPipeline {
         };
 
         let pipeline = state.device.create_render_pipeline(&pipeline_desc);
-
-        let vertex = vertex.clone();
-        let fragment = fragment.clone();
 
         let result = GraphicsPipeline {
             vertex,
@@ -544,6 +541,9 @@ pub fn find_fragment_var_location_map(
     expr_global(expr_id, global_id).
     expr_out_ix(expr_id, mem_ix).
 
+
+    expr_compose_ptr(expr_id, (expr_id, comp_ix))?
+
     we want to find (var_name, location):
 
     expr_out_ix(X, mem_ix)
@@ -571,15 +571,28 @@ pub fn find_fragment_var_location_map(
 
     */
 
-    let globals = iteration.variable::<(usize, String)>("globals");
 
-    let struct_ix_loc = iteration.variable::<(u32, u32)>("struct_ix_loc");
+    // new variables
+    
 
     type Expr = Handle<Expression>;
+    type Global = usize;
+
+    let globals = iteration.variable::<(Global, String)>("globals");
 
     let expr_load = iteration.variable::<(Expr, Expr)>("expr_load");
-    let expr_out_ix = iteration.variable::<(Expr, u32)>("out_component");
-    let expr_global = iteration.variable::<(Expr, usize)>("expr_global");
+    let expr_struct_load =
+        iteration.variable::<(Expr, (usize, Expr))>("expr_struct_load");
+    let expr_global = iteration.variable::<(Expr, Global)>("expr_global");
+
+    let result_ix_location =
+        iteration.variable::<(usize, u32)>("result_ix_location");
+
+    let util_struct_load =
+        iteration.variable::<(Expr, (usize, Expr))>("util_struct_load");
+
+    let global_return = iteration.variable::<(usize, Global)>("global_return");
+    let global_loc = iteration.variable::<(Global, u32)>("global_loc");
 
     let entry_point = &module.entry_points[0].function;
 
@@ -600,7 +613,7 @@ pub fn find_fragment_var_location_map(
     // here, we add the relations for the shader location and the index
     // into this ordered set.
     //
-    // struct_ix_loc(mem_ix, location).
+    // result_ix_location(mem_ix, location).
     if let Some(result) = entry_point.result.as_ref() {
         if let Some(naga::Binding::Location {
             location,
@@ -609,11 +622,11 @@ pub fn find_fragment_var_location_map(
         }) = result.binding.as_ref()
         {
             log::warn!("extending with {location}");
-            struct_ix_loc.extend(Some((0, *location)));
+            result_ix_location.extend(Some((0, *location)));
         } else if let naga::TypeInner::Struct { members, span } =
             &module.types[result.ty].inner
         {
-            struct_ix_loc.extend(members.iter().enumerate().map(
+            result_ix_location.extend(members.iter().enumerate().map(
                 |(mem_ix, member)| {
                     if let Some(naga::Binding::Location {
                         location,
@@ -621,7 +634,7 @@ pub fn find_fragment_var_location_map(
                         sampling,
                     }) = member.binding.as_ref()
                     {
-                        (mem_ix as u32, *location)
+                        (mem_ix, *location)
                     } else {
                         unreachable!();
                     }
@@ -642,7 +655,7 @@ pub fn find_fragment_var_location_map(
                 None
             }
         })
-        .unwrap();
+        .expect("Fragment shader returns nothing");
 
     // there are some pointer-like expressions in the "outer" entry
     // point function we need
@@ -666,86 +679,86 @@ pub fn find_fragment_var_location_map(
             // expr_out_ix(mem_ix, expr_id)
             naga::Expression::Compose { ty, components } => {
                 for (mem_ix, ptr) in components.iter().enumerate() {
-                    expr_out_ix.extend(Some((*ptr, mem_ix as u32)));
+                    expr_struct_load.extend(Some((expr_id, (mem_ix, *ptr))));
                 }
             }
             _ => (),
         }
     }
 
-    let global_mem = iteration.variable::<(usize, u32)>("global_mem");
-    let mem_global = iteration.variable::<(u32, usize)>("mem_global");
-    let global_loc = iteration.variable::<(usize, u32)>("global_loc");
-    let global_var_loc =
-        iteration.variable::<(usize, (String, u32))>("global_var_loc");
+    // the expression ID that is returned by the shader function
+    let return_expr = Relation::from_iter(Some(return_value_expr_id));
+    let rel_struct_loads = expr_struct_load.clone().complete();
 
-    let expr_load = expr_load.complete();
+    
+    let result = iteration.variable::<(Global, (String, u32))>("result");
 
     while iteration.changed() {
-        mem_global.from_map(&global_mem, |(g_id, mem_ix)| (*mem_ix, *g_id));
+        /* in a nutshell:
 
-        /*
-        expr_out_ix(Y, mem_ix) :- expr_out_ix(X, mem_ix), expr_load(X, Y).
+            result(global_id, name, location)
+              :- return_expr(return_id),
+                 expr_struct_load(return_id, (ix, ptr)),
+                 expr_global(ptr, global_id),
+                 global(global_id, name),
+                 result_ix_location(ix, location).
         */
-        expr_out_ix.from_join(&expr_out_ix, &expr_load, |x, mem_ix, y| {
-            (*y, *mem_ix) //
-        });
+
+        // helper
+        // util_struct_load(ptr, (ix, return_id))
+        //    :- expr_struct_load(return_id, (ix, ptr))
+        util_struct_load
+            .from_map(&expr_struct_load, |(return_id, (ix, ptr))| {
+                (*ptr, (*ix, *return_id))
+            });
+
+        /*  util_struct_load(dst, (ix, return_id))
+              :- util_struct_load(ptr, (ix, return_id)),
+                 expr_load(ptr, dst).
+        */
+        util_struct_load.from_join(
+            &util_struct_load,
+            &expr_load,
+            |ptr, (ix, return_id), dst| (*dst, (*ix, *return_id)),
+        );
 
         /*
-        expr_global(Y, g_id) :- expr_global(X, g_id), expr_load(X, Y).
-         */
-        expr_global.from_join(&expr_global, &expr_load, |_x, g_id, y| {
-            (*y, *g_id) //
-        });
-
-        /*
-        global_mem(global_id, mem_ix)
-          :- expr_global(expr_id, global_id),
-             expr_out_ix(expr_id, mem_ix).
-         */
-        global_mem.from_join(
+           global_return(ix, global_id)
+             :- util_struct_load(ptr, (ix, return_id)),
+                expr_global(ptr, global_id).
+        */
+        global_return.from_join(
+            &util_struct_load,
             &expr_global,
-            &expr_out_ix,
-            |_expr_id, global_id, mem_ix| {
-                (*global_id, *mem_ix) //
-            },
+            |ptr, (ix, return_id), global_id| (*ix, *global_id),
         );
 
         /*
-        global_loc(global_id, location)
-          :- mem_global(mem_ix, global_id),
-             struct_ix_location(mem_ix, location).
-         */
+          global_loc(global_id, location)
+           :- global_return(ix, global_id),
+              result_ix_location(ix, location).
+        */
+
         global_loc.from_join(
-            &mem_global,
-            &struct_ix_loc,
-            |_mem_ix, global_id, location| {
-                (*global_id, *location) //
-            },
+            &global_return,
+            &result_ix_location,
+            |ix, g_id, loc| (*g_id, *loc),
         );
 
-        // global_var_loc.from_leapjoin(
-
-        global_var_loc.from_join(
-            &globals,
-            &global_loc,
-            |g_id, name, location| (*g_id, (name.clone(), *location)),
-        );
+        result.from_join(&globals, &global_loc, |g_id, name, loc| {
+            (*g_id, (name.to_string(), *loc))
+        });
     }
 
-    let expr_out_ix = expr_out_ix.complete();
-    let expr_out_ix = expr_out_ix
+    let result = result.complete();
+
+    let result = result
+        .elements
         .into_iter()
-        .map(|(h, e)| (h.index(), *e))
+        .map(|(_, s)| s)
         .collect::<Vec<_>>();
 
-    let output = global_var_loc
-        .complete()
-        .into_iter()
-        .map(|(_id, out)| out.clone())
-        .collect::<Vec<_>>();
-
-    output
+    result
 }
 
 fn naga_to_wgpu_vertex_format(
@@ -800,9 +813,12 @@ fn naga_to_wgpu_texture_format(
         (None, Kind::Sint, 4) => Some(Tx::R32Sint),
         (Some(Size::Bi), Kind::Sint, 4) => Some(Tx::Rg32Sint),
         (Some(Size::Quad), Kind::Sint, 4) => Some(Tx::Rgba32Sint),
-        (None, Kind::Float, 4) => Some(Tx::R32Float),
-        (Some(Size::Bi), Kind::Float, 4) => Some(Tx::Rg32Float),
-        (Some(Size::Quad), Kind::Float, 4) => Some(Tx::Rgba32Float),
+        // (None, Kind::Float, 4) => Some(Tx::R32Float),
+        // (Some(Size::Bi), Kind::Float, 4) => Some(Tx::Rg32Float),
+        // (Some(Size::Quad), Kind::Float, 4) => Some(Tx::Rgba32Float),
+        (None, Kind::Float, 4) => Some(Tx::R8Unorm),
+        (Some(Size::Bi), Kind::Float, 4) => Some(Tx::Rg8Unorm),
+        (Some(Size::Quad), Kind::Float, 4) => Some(Tx::Rgba8Unorm),
         _ => None,
     }
 }
