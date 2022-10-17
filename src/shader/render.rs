@@ -29,26 +29,28 @@ impl GraphicsPipeline {
         vertex: &Arc<VertexShaderInstance>,
         fragment: &Arc<FragmentShaderInstance>,
     ) -> Result<Self> {
-        let mut vertex_buffers = Vec::new();
+        let vertex_buffers = vertex.create_buffer_layouts();
+        let vertex_state = vertex.create_vertex_state(&vertex_buffers);
 
-        let vertex_state = {
-            for (ix, attrs) in vertex.vertex_buffer_layouts.iter().enumerate() {
-                let array_stride = vertex.vertex_buffer_strides[ix];
-                let step_mode = vertex.vertex_step_modes[ix];
-
-                let buffer = wgpu::VertexBufferLayout {
-                    array_stride,
-                    step_mode,
-                    attributes: attrs.as_slice(),
+        let mut color_targets = Vec::new();
+        let fragment_state = {
+            // TODO blend and write_mask should be configurable
+            for output in fragment.shader.fragment_outputs.iter() {
+                let state = wgpu::ColorTargetState {
+                    format: output.format,
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: wgpu::ColorWrites::ALL,
                 };
-                vertex_buffers.push(buffer);
+                color_targets.push(Some(state));
             }
 
-            wgpu::VertexState {
-                module: &vertex.shader.shader_module,
-                entry_point: vertex.shader.entry_point.name.as_str(),
-                buffers: vertex_buffers.as_slice(),
-            }
+            let state = wgpu::FragmentState {
+                module: &fragment.shader.shader_module,
+                entry_point: fragment.shader.entry_point.name.as_str(),
+                targets: color_targets.as_slice(),
+            };
+
+            state
         };
 
         let pipeline_layout = {
@@ -97,13 +99,16 @@ impl GraphicsPipeline {
 
         let pipeline_desc = wgpu::RenderPipelineDescriptor {
             label: Some("render pipeline"),
+
             layout: Some(&pipeline_layout),
             vertex: vertex_state,
+            fragment: Some(fragment_state),
+
             primitive,
             depth_stencil: None,
+
             multisample,
-            fragment: todo!(),
-            multiview: todo!(),
+            multiview: None,
         };
 
         let pipeline = state.device.create_render_pipeline(&pipeline_desc);
@@ -111,7 +116,15 @@ impl GraphicsPipeline {
         let vertex = vertex.clone();
         let fragment = fragment.clone();
 
-        todo!();
+        let result = GraphicsPipeline {
+            vertex,
+            fragment,
+
+            pipeline_layout,
+            pipeline,
+        };
+
+        Ok(result)
     }
 }
 
@@ -126,6 +139,35 @@ pub struct VertexShaderInstance {
 }
 
 impl VertexShaderInstance {
+    // must use the buffer layouts produced by calling `create_buffer_layout`
+    // on this instance
+    pub fn create_vertex_state<'a>(
+        &'a self,
+        buffer_layouts: &'a [wgpu::VertexBufferLayout<'a>],
+    ) -> wgpu::VertexState<'a> {
+        wgpu::VertexState {
+            module: &self.shader.shader_module,
+            entry_point: self.shader.entry_point.name.as_str(),
+            buffers: buffer_layouts,
+        }
+    }
+
+    pub fn create_buffer_layouts(&self) -> Vec<wgpu::VertexBufferLayout<'_>> {
+        let mut vertex_buffers = Vec::new();
+        for (ix, attrs) in self.vertex_buffer_layouts.iter().enumerate() {
+            let array_stride = self.vertex_buffer_strides[ix];
+            let step_mode = self.vertex_step_modes[ix];
+
+            let buffer = wgpu::VertexBufferLayout {
+                array_stride,
+                step_mode,
+                attributes: attrs.as_slice(),
+            };
+            vertex_buffers.push(buffer);
+        }
+        vertex_buffers
+    }
+
     pub fn from_shader_single_buffer(
         shader: &Arc<VertexShader>,
         step_mode: wgpu::VertexStepMode,
