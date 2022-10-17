@@ -1,4 +1,7 @@
-use raving_wgpu::{shader::{interface::PushConstants, render::VertexShader}, State};
+use raving_wgpu::{
+    shader::{interface::PushConstants, render::VertexShader},
+    State,
+};
 use winit::{
     event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent},
     event_loop::ControlFlow,
@@ -25,6 +28,12 @@ fn load_shader(shader_src: &[u8]) -> anyhow::Result<()> {
     println!(" --- constants ---");
 
     for (handle, cnst) in module.constants.iter() {
+        println!("{:?} - {:#?}", handle, cnst);
+    }
+
+    println!(" --- functions ---");
+
+    for (handle, cnst) in module.functions.iter() {
         println!("{:?} - {:#?}", handle, cnst);
     }
 
@@ -93,16 +102,33 @@ fn fragment() -> anyhow::Result<()> {
         "/shaders/shader.frag.spv"
     ));
 
-    load_shader(shader_src)
+    load_shader(shader_src);
+
+    
+    let module = naga::front::spv::parse_u8_slice(
+        shader_src,
+        &naga::front::spv::Options {
+            adjust_coordinate_space: true,
+            strict_capabilities: false,
+            block_ctx_dump_prefix: None,
+        },
+    )?;
+
+    // let frag_locs =
+    //     raving_wgpu::shader::render::find_fragment_var_location_map(&module);
+    // log::warn!("fragment output locations: {:#?}", frag_locs);
+
+    Ok(())
 }
 
 pub fn main() -> anyhow::Result<()> {
-    env_logger::init();
+    env_logger::builder()
+        .filter_level(log::LevelFilter::Warn)
+        .init();
 
     // compute();
-    vertex();
-    // fragment();
-
+    // vertex();
+    fragment();
 
     Ok(())
 }

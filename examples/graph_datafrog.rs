@@ -3,7 +3,10 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use anyhow::Result;
-use raving_wgpu::{NodeId, shader::render::VertexShader};
+use raving_wgpu::{
+    shader::render::{FragmentShader, VertexShader},
+    NodeId,
+};
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
     BufferUsages, Extent3d, ImageCopyTexture, Origin3d,
@@ -22,21 +25,27 @@ pub async fn run() -> anyhow::Result<()> {
 
     println!(" tutturu~~");
 
-    let shader_src = include_bytes!(concat!(
+    let vert_src = include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/shaders/shader.vert.spv"
     ));
 
-    let vx = VertexShader::from_spirv(&state, shader_src, "main")?;
+    let vert = VertexShader::from_spirv(&state, vert_src, "main")?;
 
+    let frag_src = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/shaders/shader.frag.spv"
+    ));
+
+    let frag = FragmentShader::from_spirv(&state, frag_src, "main")?;
 
     Ok(())
 }
 
 pub fn main() {
     env_logger::builder()
-    .filter_level(log::LevelFilter::Info)
-    .init();
+        .filter_level(log::LevelFilter::Info)
+        .init();
 
     log::error!("logging!");
     if let Err(e) = pollster::block_on(run()) {
