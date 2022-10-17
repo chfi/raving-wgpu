@@ -114,9 +114,9 @@ fn fragment() -> anyhow::Result<()> {
         },
     )?;
 
-    // let frag_locs =
-    //     raving_wgpu::shader::render::find_fragment_var_location_map(&module);
-    // log::warn!("fragment output locations: {:#?}", frag_locs);
+    let frag_locs =
+        raving_wgpu::shader::render::find_fragment_var_location_map(&module);
+    log::warn!("fragment output locations: {:#?}", frag_locs);
 
     Ok(())
 }

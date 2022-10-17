@@ -1,10 +1,11 @@
-use naga::{Handle, Expression};
+use naga::{Expression, Handle};
 use rustc_hash::{FxHashMap, FxHashSet};
 use wgpu::*;
 
 use anyhow::{anyhow, bail, Result};
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
+    iter,
     sync::Arc,
 };
 
@@ -399,15 +400,33 @@ pub fn find_fragment_var_location_map(
     let mut iteration = Iteration::new();
 
     /*
-    globals(global_id, var_name).
+    global(global_id, var_name).
 
     struct_ix_location(mem_ix, location).
 
     expr_load(expr_id, expr_id).
     expr_global(expr_id, global_id).
-    expr_out_ix(mem_ix, expr_id).
+    expr_out_ix(expr_id, mem_ix).
 
-    
+    we want to find (var_name, location):
+
+    expr_out_ix(X, mem_ix)
+      :- expr_out_ix(Y, mem_ix),
+         expr_load(X, Y).
+
+    expr_global(X, global)
+      :- expr_global(Y, global),
+         expr_load(X, Y).
+
+    global_mem(global_id, mem_ix)
+      :- expr_global(expr_id, global_id),
+         expr_out_ix(expr_id, mem_ix),
+         expr_global(expr_id, global_id).
+
+    global_var_location(global_id, var_name, location)
+      :- global_mem(global_id, mem_ix),
+         struct_ix_location(mem_ix, location),
+         global(global_id, var_name).
 
     example:
     globals(2, "f_color").
@@ -426,9 +445,9 @@ pub fn find_fragment_var_location_map(
     expr_global(4, 3).
     expr_global(5, 6).
 
-    expr_out_ix(6, 0).
-    expr_out_ix(7, 1).
-    expr_out_ix(8, 2).
+    expr_out_ix(0, 6).
+    expr_out_ix(1, 7).
+    expr_out_ix(2, 8).
 
     */
 
@@ -440,7 +459,7 @@ pub fn find_fragment_var_location_map(
 
     let expr_load = iteration.variable::<(Expr, Expr)>("expr_load");
     // let expr_global = iteration.variable::<(u32, u32)>("expr_global");
-    let expr_out_ix = iteration.variable::<(u32, Expr)>("out_component");
+    let expr_out_ix = iteration.variable::<(Expr, u32)>("out_component");
     let expr_global = iteration.variable::<(Expr, usize)>("expr_global");
 
     let entry_point = &module.entry_points[0].function;
@@ -475,8 +494,20 @@ pub fn find_fragment_var_location_map(
         } else if let naga::TypeInner::Struct { members, span } =
             &module.types[result.ty].inner
         {
-            dbg!(members);
-            todo!();
+            struct_ix_loc.extend(members.iter().enumerate().map(
+                |(mem_ix, member)| {
+                    if let Some(naga::Binding::Location {
+                        location,
+                        interpolation,
+                        sampling,
+                    }) = member.binding.as_ref()
+                    {
+                        (mem_ix as u32, *location)
+                    } else {
+                        unreachable!();
+                    }
+                },
+            ));
         }
     } else {
         panic!("Fragment shader has no output");
@@ -516,14 +547,42 @@ pub fn find_fragment_var_location_map(
             // expr_out_ix(mem_ix, expr_id)
             naga::Expression::Compose { ty, components } => {
                 for (mem_ix, ptr) in components.iter().enumerate() {
-                    expr_out_ix.extend(Some((mem_ix as u32, *ptr)));
+                    expr_out_ix.extend(Some((*ptr, mem_ix as u32)));
                 }
             }
             _ => (),
         }
     }
 
-    todo!();
+    let global_mem = iteration.variable::<(usize, u32)>("global_mem");
+    let global_var_loc =
+        iteration.variable::<(usize, (String, u32))>("global_var_loc");
+
+    while iteration.changed() {
+        /*
+        expr_out_ix(Y, mem_ix) :- expr_out_ix(X, mem_ix), expr_load(X, Y).
+        */
+        expr_out_ix
+            .from_join(&expr_out_ix, &expr_load, |x, mem_ix, y| (*y, *mem_ix));
+
+    }
+
+    let expr_out_ix = expr_out_ix.complete();
+    let expr_out_ix = expr_out_ix
+        .into_iter()
+        .map(|(h, e)| (h.index(), *e))
+        .collect::<Vec<_>>();
+
+    log::warn!("expr_out_ix: {:#?}", expr_out_ix);
+    log::warn!("expr_out_ix.len() = {}", expr_out_ix.len());
+
+    let output = global_var_loc
+        .complete()
+        .into_iter()
+        .map(|(_id, out)| out.clone())
+        .collect();
+
+    output
 }
 
 fn naga_to_wgpu_vertex_format(
