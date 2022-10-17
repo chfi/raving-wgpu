@@ -414,40 +414,24 @@ pub fn find_fragment_var_location_map(
       :- expr_out_ix(Y, mem_ix),
          expr_load(X, Y).
 
-    expr_global(X, global)
-      :- expr_global(Y, global),
+    expr_global(X, global_id)
+      :- expr_global(Y, global_id),
          expr_load(X, Y).
 
     global_mem(global_id, mem_ix)
       :- expr_global(expr_id, global_id),
-         expr_out_ix(expr_id, mem_ix),
-         expr_global(expr_id, global_id).
+         expr_out_ix(expr_id, mem_ix).
+ 
+    mem_global(mem_ix, global_id) :- global_mem(global_id, mem_ix).
+
+    global_loc(global_id, location)
+      :- mem_global(mem_ix, global_id),
+         struct_ix_location(mem_ix, location).
 
     global_var_location(global_id, var_name, location)
       :- global_mem(global_id, mem_ix),
          struct_ix_location(mem_ix, location),
          global(global_id, var_name).
-
-    example:
-    globals(2, "f_color").
-    globals(3, "f_norm").
-    globals(6, "id_out").
-
-    struct_ix_location(0, 2).
-    struct_ix_location(1, 0).
-    struct_ix_location(2, 1).
-
-    expr_load(6, 3).
-    expr_load(7, 4).
-    expr_load(8, 5).
-
-    expr_global(3, 2).
-    expr_global(4, 3).
-    expr_global(5, 6).
-
-    expr_out_ix(0, 6).
-    expr_out_ix(1, 7).
-    expr_out_ix(2, 8).
 
     */
 
@@ -458,7 +442,6 @@ pub fn find_fragment_var_location_map(
     type Expr = Handle<Expression>;
 
     let expr_load = iteration.variable::<(Expr, Expr)>("expr_load");
-    // let expr_global = iteration.variable::<(u32, u32)>("expr_global");
     let expr_out_ix = iteration.variable::<(Expr, u32)>("out_component");
     let expr_global = iteration.variable::<(Expr, usize)>("expr_global");
 
@@ -555,16 +538,55 @@ pub fn find_fragment_var_location_map(
     }
 
     let global_mem = iteration.variable::<(usize, u32)>("global_mem");
+    let mem_global = iteration.variable::<(u32, usize)>("mem_global");
+    let global_loc = iteration.variable::<(usize, u32)>("global_loc");
     let global_var_loc =
         iteration.variable::<(usize, (String, u32))>("global_var_loc");
 
+
+
     while iteration.changed() {
+
+        mem_global.from_map(&global_mem, |(g_id, mem_ix)| (*mem_ix, *g_id));
+
         /*
         expr_out_ix(Y, mem_ix) :- expr_out_ix(X, mem_ix), expr_load(X, Y).
         */
-        expr_out_ix
-            .from_join(&expr_out_ix, &expr_load, |x, mem_ix, y| (*y, *mem_ix));
+        expr_out_ix.from_join(&expr_out_ix, &expr_load, |x, mem_ix, y| {
+            (*y, *mem_ix) //
+        });
 
+        /*
+        expr_global(Y, g_id) :- expr_global(X, g_id), expr_load(X, Y).
+         */
+        expr_global.from_join(&expr_global, &expr_load, |_x, g_id, y| {
+            (*y, *g_id) //
+        });
+
+        /*
+        global_mem(global_id, mem_ix)
+          :- expr_global(expr_id, global_id),
+             expr_out_ix(expr_id, mem_ix).
+         */
+        global_mem.from_join(&expr_global, &expr_out_ix,
+        |_expr_id, global_id, mem_ix| {
+            (*global_id, *mem_ix) //
+        });
+
+        /*
+        global_loc(global_id, location)
+          :- mem_global(mem_ix, global_id),
+             struct_ix_location(mem_ix, location).
+         */
+        global_loc.from_join(&mem_global, &struct_ix_loc,
+        |_mem_ix, global_id, location| {
+            (*global_id, *location) //
+        });
+
+        global_var_loc.from_join(&globals, &global_loc,
+        |g_id, name, location| {
+            (*g_id, (name.clone(), *location))
+        });
     }
 
     let expr_out_ix = expr_out_ix.complete();
@@ -573,14 +595,11 @@ pub fn find_fragment_var_location_map(
         .map(|(h, e)| (h.index(), *e))
         .collect::<Vec<_>>();
 
-    log::warn!("expr_out_ix: {:#?}", expr_out_ix);
-    log::warn!("expr_out_ix.len() = {}", expr_out_ix.len());
-
     let output = global_var_loc
         .complete()
         .into_iter()
         .map(|(_id, out)| out.clone())
-        .collect();
+        .collect::<Vec<_>>();
 
     output
 }
