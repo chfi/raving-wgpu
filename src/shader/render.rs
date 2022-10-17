@@ -1,4 +1,4 @@
-use naga::{Expression, Handle};
+use naga::{Expression, Handle, VectorSize};
 use rustc_hash::{FxHashMap, FxHashSet};
 use wgpu::*;
 
@@ -214,7 +214,7 @@ pub struct FragmentShader {
     pub shader_module: wgpu::ShaderModule,
     pub entry_point: naga::EntryPoint,
 
-    pub attachments: Vec<FragmentOutput>,
+    pub fragment_outputs: Vec<FragmentOutput>,
     // pub vertex_inputs: Vec<VertexInput>,
     pub group_bindings: Vec<GroupBindings>,
     pub bind_group_layouts: Vec<wgpu::BindGroupLayout>,
@@ -270,10 +270,20 @@ impl FragmentShader {
 
         // add fragment outputs
 
-        // let mut fragment_outputs = Vec::new();
+        let mut fragment_outputs = Vec::new();
+
+        let var_name_locations = find_fragment_var_location_map(&naga_mod);
+
+        let find_name_by_loc = |loc: u32| -> Option<&str> {
+            var_name_locations
+                .iter()
+                .find_map(|(name, l)| (*l == loc).then_some(name.as_str()))
+        };
 
         if let Some(result) = entry_point.function.result.as_ref() {
+            dbg!();
             if let Some(binding) = result.binding.as_ref() {
+                dbg!();
                 let location =
                     if let naga::Binding::Location { location, .. } = binding {
                         *location
@@ -281,83 +291,64 @@ impl FragmentShader {
                         anyhow::bail!("No output found on fragment shader");
                     };
 
-                let (size, kind, width) = match &naga_mod.types[result.ty].inner
-                {
-                    naga::TypeInner::Scalar { kind, width } => {
-                        (None, *kind, *width)
-                    }
-                    naga::TypeInner::Vector { size, kind, width } => {
-                        (Some(*size), *kind, *width)
-                    }
-                    other => {
-                        panic!("unsupported vertex type: {:?}", other);
-                    }
+                let format =
+                    naga_type_inner_sizes(&naga_mod.types[result.ty].inner)
+                        .and_then(|(size, kind, width)| {
+                            naga_to_wgpu_texture_format(size, kind, width)
+                        })
+                        .expect("unsupported vertex type or format");
+
+                let name = find_name_by_loc(location).unwrap();
+                let output = FragmentOutput {
+                    name: name.into(),
+                    location,
+                    format,
                 };
+                fragment_outputs.push(output);
+            } else {
+                let result_type = &naga_mod.types[result.ty].inner;
 
-                log::warn!(
-                    "fragment output `{:?}` - {:?}\t{:?}width {}",
-                    "",
-                    // result.ty.,
-                    size,
-                    kind,
-                    width
-                );
+                if let naga::TypeInner::Struct { members, span } = &result_type
+                {
+                    for (ix, mem) in members.iter().enumerate() {
+                        let location = mem
+                            .binding
+                            .as_ref()
+                            .and_then(|binding| {
+                                if let naga::Binding::Location {
+                                    location,
+                                    ..
+                                } = binding
+                                {
+                                    Some(*location)
+                                } else {
+                                    None
+                                }
+                            })
+                            .expect(
+                                "location missing from fragment shader output",
+                            );
 
-                // if let Some(format) =
-                //     naga_to_wgpu_vertex_format(size, kind, width)
-                // {
-                //     let input = VertexInput {
-                //         name: arg.name.clone().unwrap_or_default(),
-                //         location,
-                //         format,
-                //     };
-                //     vertex_inputs.push(input);
-                // }
+                        let format = naga_type_inner_sizes(
+                            &naga_mod.types[mem.ty].inner,
+                        )
+                        .and_then(|(size, kind, width)| {
+                            naga_to_wgpu_texture_format(size, kind, width)
+                        })
+                        .expect("unsupported vertex type or format");
+
+                        let name = find_name_by_loc(location).unwrap();
+                        let output = FragmentOutput {
+                            name: name.into(),
+                            location,
+                            format,
+                        };
+                        fragment_outputs.push(output);
+                    }
+                }
+                log::warn!("result_type: {:#?}", result_type);
             }
         }
-
-        /*
-          for arg in entry_point.function.arguments.iter() {
-              if let Some(binding) = arg.binding.as_ref() {
-                  let location =
-                      if let naga::Binding::Location { location, .. } = binding {
-                          *location
-                      } else {
-                          continue;
-                      };
-
-                  todo!();
-                  let (size, kind, width) = match &naga_mod.types[arg.ty].inner {
-                      naga::TypeInner::Scalar { kind, width } => {
-                          (None, *kind, *width)
-                      }
-                      naga::TypeInner::Vector { size, kind, width } => {
-                          (Some(*size), *kind, *width)
-                      }
-                      other => {
-                          log::warn!("{:?} - TextureFormat: {:?}", arg.name, )
-                          todo!();
-                          // panic!("unsupported vertex type: {:?}", other);
-                      }
-                  };
-
-                  // if let Some(format) =
-                  //     naga_to_wgpu_vertex_format(size, kind, width)
-                  // {
-                  //     let input = VertexInput {
-                  //         name: arg.name.clone().unwrap_or_default(),
-                  //         location,
-                  //         format,
-                  //     };
-                  //     vertex_inputs.push(input);
-                  // }
-              }
-          }
-        */
-
-        // vertex_inputs.sort_by_key(|v| v.location);
-
-        // log::warn!("vertex inputs: {:#?}", vertex_inputs);
 
         let bind_group_layouts =
             GroupBindings::create_bind_group_layouts_checked(
@@ -365,25 +356,16 @@ impl FragmentShader {
                 state,
             )?;
 
-        todo!();
+        log::warn!("fragment_outputs: {:#?}", fragment_outputs);
 
-        // Ok(FragmentShader {
-        //     shader_module: (),
-        //     entry_point: (),
-        //     attachments: (),
-        //     group_bindings: (),
-        //     bind_group_layouts: (),
-        //     push_constants: (),
-        // })
-
-        // Ok(VertexShader {
-        //     shader_module,
-        //     entry_point: entry_point.clone(),
-        //     vertex_inputs,
-        //     group_bindings,
-        //     bind_group_layouts,
-        //     push_constants,
-        // })
+        Ok(FragmentShader {
+            shader_module,
+            entry_point: entry_point.clone(),
+            fragment_outputs,
+            group_bindings,
+            bind_group_layouts,
+            push_constants,
+        })
     }
 }
 
@@ -421,7 +403,7 @@ pub fn find_fragment_var_location_map(
     global_mem(global_id, mem_ix)
       :- expr_global(expr_id, global_id),
          expr_out_ix(expr_id, mem_ix).
- 
+
     mem_global(mem_ix, global_id) :- global_mem(global_id, mem_ix).
 
     global_loc(global_id, location)
@@ -543,10 +525,7 @@ pub fn find_fragment_var_location_map(
     let global_var_loc =
         iteration.variable::<(usize, (String, u32))>("global_var_loc");
 
-
-
     while iteration.changed() {
-
         mem_global.from_map(&global_mem, |(g_id, mem_ix)| (*mem_ix, *g_id));
 
         /*
@@ -568,25 +547,32 @@ pub fn find_fragment_var_location_map(
           :- expr_global(expr_id, global_id),
              expr_out_ix(expr_id, mem_ix).
          */
-        global_mem.from_join(&expr_global, &expr_out_ix,
-        |_expr_id, global_id, mem_ix| {
-            (*global_id, *mem_ix) //
-        });
+        global_mem.from_join(
+            &expr_global,
+            &expr_out_ix,
+            |_expr_id, global_id, mem_ix| {
+                (*global_id, *mem_ix) //
+            },
+        );
 
         /*
         global_loc(global_id, location)
           :- mem_global(mem_ix, global_id),
              struct_ix_location(mem_ix, location).
          */
-        global_loc.from_join(&mem_global, &struct_ix_loc,
-        |_mem_ix, global_id, location| {
-            (*global_id, *location) //
-        });
+        global_loc.from_join(
+            &mem_global,
+            &struct_ix_loc,
+            |_mem_ix, global_id, location| {
+                (*global_id, *location) //
+            },
+        );
 
-        global_var_loc.from_join(&globals, &global_loc,
-        |g_id, name, location| {
-            (*g_id, (name.clone(), *location))
-        });
+        global_var_loc.from_join(
+            &globals,
+            &global_loc,
+            |g_id, name, location| (*g_id, (name.clone(), *location)),
+        );
     }
 
     let expr_out_ix = expr_out_ix.complete();
@@ -629,6 +615,18 @@ fn naga_to_wgpu_vertex_format(
     }
 }
 
+fn naga_type_inner_sizes(
+    inner: &naga::TypeInner,
+) -> Option<(Option<VectorSize>, naga::ScalarKind, u8)> {
+    match inner {
+        naga::TypeInner::Scalar { kind, width } => Some((None, *kind, *width)),
+        naga::TypeInner::Vector { size, kind, width } => {
+            Some((Some(*size), *kind, *width))
+        }
+        other => None,
+    }
+}
+
 fn naga_to_wgpu_texture_format(
     vec_size: Option<naga::VectorSize>,
     kind: naga::ScalarKind,
@@ -638,22 +636,15 @@ fn naga_to_wgpu_texture_format(
     use naga::VectorSize as Size;
     use wgpu::TextureFormat as Tx;
     match (vec_size, kind, width) {
-        // (None, Kind::Float, 4) => Some(Tx::Rgba),
-        // (Some(Size::Quad), Kind::Float, 4) => Some(Tx::Float32x2),
-        /*
-        (None, Kind::Float, 4) => Some(Tx::Rgba),
-        (Some(Size::Bi), Kind::Float, 4) => Some(Tx::Float32x2),
-        (Some(Size::Tri), Kind::Float, 4) => Some(Tx::Float32x3),
-        (Some(Size::Quad), Kind::Float, 4) => Some(Tx::Float32x4),
-        (None, Kind::Sint, 4) => Some(Tx::Sint32),
-        (Some(Size::Bi), Kind::Sint, 4) => Some(Tx::Sint32x2),
-        (Some(Size::Tri), Kind::Sint, 4) => Some(Tx::Sint32x3),
-        (Some(Size::Quad), Kind::Sint, 4) => Some(Tx::Sint32x4),
-        (None, Kind::Uint, 4) => Some(Tx::Uint32),
-        (Some(Size::Bi), Kind::Uint, 4) => Some(Tx::Uint32x2),
-        (Some(Size::Tri), Kind::Uint, 4) => Some(Tx::Uint32x3),
-        (Some(Size::Quad), Kind::Uint, 4) => Some(Tx::Uint32x4),
-        */
+        (None, Kind::Uint, 4) => Some(Tx::R32Uint),
+        (Some(Size::Bi), Kind::Uint, 4) => Some(Tx::Rg32Uint),
+        (Some(Size::Quad), Kind::Uint, 4) => Some(Tx::Rgba32Uint),
+        (None, Kind::Sint, 4) => Some(Tx::R32Sint),
+        (Some(Size::Bi), Kind::Sint, 4) => Some(Tx::Rg32Sint),
+        (Some(Size::Quad), Kind::Sint, 4) => Some(Tx::Rgba32Sint),
+        (None, Kind::Float, 4) => Some(Tx::R32Float),
+        (Some(Size::Bi), Kind::Float, 4) => Some(Tx::Rg32Float),
+        (Some(Size::Quad), Kind::Float, 4) => Some(Tx::Rgba32Float),
         _ => None,
     }
 }

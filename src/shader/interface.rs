@@ -1,7 +1,9 @@
 use std::collections::{BTreeMap, HashMap};
 
 use anyhow::Result;
-use wgpu::{PushConstantRange, StorageTextureAccess, BindingType, BindingResource};
+use wgpu::{
+    BindingResource, BindingType, PushConstantRange, StorageTextureAccess,
+};
 
 use super::BindingDef;
 
@@ -17,7 +19,6 @@ pub struct GroupBindings {
 }
 
 impl GroupBindings {
-
     pub fn create_bind_groups(
         group_bindings: &[Self],
         state: &crate::State,
@@ -93,11 +94,12 @@ impl GroupBindings {
             entries.push(entry);
         }
 
-        let bind_group = state.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
-            layout,
-            entries: entries.as_slice(),
-        });
+        let bind_group =
+            state.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: None,
+                layout,
+                entries: entries.as_slice(),
+            });
 
         Ok(bind_group)
     }
@@ -169,7 +171,6 @@ impl GroupBindings {
                     .or_default()
                     .push(binding_def);
             }
-
         }
 
         let mut final_bindings = Vec::new();
@@ -211,64 +212,96 @@ impl GroupBindings {
                         dim,
                         arrayed,
                         class,
-                    } => match class {
-                        naga::ImageClass::Depth { multi } => {
-                            panic!("unimplemented!");
+                    } => {
+                        use naga::ImageDimension as ImgDim;
+                        use wgpu::TextureViewDimension as TvDim;
+
+                        let view_dimension = match (*arrayed, dim) {
+                            (false, ImgDim::D1) => TvDim::D1,
+                            (false, ImgDim::D2) => TvDim::D2,
+                            (false, ImgDim::D3) => TvDim::D3,
+                            (false, ImgDim::Cube) => TvDim::Cube,
+                            (true, ImgDim::D2) => TvDim::D2Array,
+                            (true, ImgDim::Cube) => TvDim::CubeArray,
+                            _ => panic!(
+                                "Unsupported image array/dimension combination"
+                            ),
+                            // (true, ImgDim::D1) => TvDim::D1,
+                            // (true, ImgDim::D3) => TvDim::D3,
+                        };
+
+                        match class {
+                            naga::ImageClass::Depth { multi } => {
+                                let sample_type =
+                                    wgpu::TextureSampleType::Depth;
+
+                                let ty = wgpu::BindingType::Texture {
+                                    sample_type,
+                                    view_dimension,
+                                    multisampled: *multi,
+                                };
+
+                                (ty, None)
+                            }
+                            naga::ImageClass::Sampled { kind, multi } => {
+                                let sample_type = match kind {
+                                    naga::ScalarKind::Sint => {
+                                        wgpu::TextureSampleType::Sint
+                                    }
+                                    naga::ScalarKind::Uint => {
+                                        wgpu::TextureSampleType::Uint
+                                    }
+                                    naga::ScalarKind::Float => {
+                                        wgpu::TextureSampleType::Float {
+                                            filterable: true,
+                                        }
+                                    }
+                                    _ => unimplemented!(),
+                                };
+
+                                let ty = wgpu::BindingType::Texture {
+                                    sample_type,
+                                    view_dimension,
+                                    multisampled: *multi,
+                                };
+
+                                (ty, None)
+                            }
+                            naga::ImageClass::Storage { format, access } => {
+                                let read =
+                                    access.contains(naga::StorageAccess::LOAD);
+                                let write =
+                                    access.contains(naga::StorageAccess::STORE);
+
+                                let input_format = format;
+                                let format =
+                                    super::format_naga_to_wgpu(format.clone());
+
+                                log::error!(
+                                    "{:?} -> {:?}\t{read}, {write}",
+                                    input_format,
+                                    format
+                                );
+
+                                use StorageTextureAccess as STAcc;
+
+                                let access = match (read, write) {
+                                    (false, false) => unreachable!(),
+                                    (true, false) => STAcc::ReadOnly,
+                                    (false, true) => STAcc::WriteOnly,
+                                    (true, true) => STAcc::ReadWrite,
+                                };
+
+                                let ty = wgpu::BindingType::StorageTexture {
+                                    access,
+                                    format,
+                                    view_dimension,
+                                };
+
+                                (ty, None)
+                            }
                         }
-                        naga::ImageClass::Sampled { kind, multi } => {
-                            panic!("unimplemented!");
-                        }
-                        naga::ImageClass::Storage { format, access } => {
-                            let read =
-                                access.contains(naga::StorageAccess::LOAD);
-                            let write =
-                                access.contains(naga::StorageAccess::STORE);
-
-                            let input_format = format;
-                            let format =
-                                super::format_naga_to_wgpu(format.clone());
-
-                            log::error!(
-                                "{:?} -> {:?}\t{read}, {write}",
-                                input_format,
-                                format
-                            );
-
-                            let access = match (read, write) {
-                                (false, false) => unreachable!(),
-                                (true, false) => StorageTextureAccess::ReadOnly,
-                                (false, true) => {
-                                    StorageTextureAccess::WriteOnly
-                                }
-                                (true, true) => StorageTextureAccess::ReadWrite,
-                            };
-
-                            // let mut access = StorageTextureAccess::
-
-                            let view_dimension = match dim {
-                                naga::ImageDimension::D1 => {
-                                    wgpu::TextureViewDimension::D1
-                                }
-                                naga::ImageDimension::D2 => {
-                                    wgpu::TextureViewDimension::D2
-                                }
-                                naga::ImageDimension::D3 => {
-                                    wgpu::TextureViewDimension::D3
-                                }
-                                naga::ImageDimension::Cube => {
-                                    wgpu::TextureViewDimension::Cube
-                                }
-                            };
-
-                            let ty = wgpu::BindingType::StorageTexture {
-                                access,
-                                format,
-                                view_dimension,
-                            };
-
-                            (ty, None)
-                        }
-                    },
+                    }
                     naga::TypeInner::Struct { members, span } => {
                         let ty = wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Storage {
@@ -279,7 +312,17 @@ impl GroupBindings {
                         };
                         (ty, None)
                     }
-                    // naga::TypeInner::
+                    naga::TypeInner::Sampler { comparison } => {
+                        // binding type would probably depend on format,
+                        // so idk where that information will come from
+                        let binding_type = if *comparison {
+                            wgpu::SamplerBindingType::Comparison
+                        } else {
+                            wgpu::SamplerBindingType::Filtering
+                        };
+                        let ty = wgpu::BindingType::Sampler(binding_type);
+                        (ty, None)
+                    }
                     e => {
                         panic!("unimplemented: {:?}", e);
                     }
