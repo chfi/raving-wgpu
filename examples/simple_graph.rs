@@ -210,6 +210,15 @@ pub async fn run() -> anyhow::Result<()> {
 
     let dims = [size.width, size.height];
 
+    let mut graph = raving_wgpu::graph::example_graph(&mut state, dims)?;
+    graph.prepare_node(0.into())?;
+    graph.prepare_node(2.into())?;
+    graph.prepare_node(1.into())?;
+
+    graph.allocate_node_resources(&state)?;
+
+    // texture is in node 0
+
     dbg!();
     let vert_src = include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -243,14 +252,89 @@ pub async fn run() -> anyhow::Result<()> {
     dbg!();
 
     let graphics = GraphicsPipeline::new(&state, vert_inst, frag_inst)?;
+
+    fn vx(p: [f32; 3], uv: [f32; 2]) -> [u8; 5 * 4] {
+        let mut buf = [0u8; 20];
+        buf[0..(3 * 4)].clone_from_slice(bytemuck::cast_slice(&p));
+        buf[(3 * 4)..].clone_from_slice(bytemuck::cast_slice(&uv));
+        buf
+    }
+
+    let vertices = vec![
+        vx([0.0, 0.0, 0.0], [0.0, 0.0]),
+        vx([0.0, 1.0, 0.0], [0.0, 1.0]),
+        vx([1.0, 0.0, 0.0], [1.0, 0.0]),
+        vx([0.0, 1.0, 0.0], [0.0, 1.0]),
+        vx([1.0, 1.0, 0.0], [1.0, 1.0]),
+        vx([1.0, 0.0, 0.0], [1.0, 0.0]),
+    ];
+
+    let vertex_buffer =
+        state.device.create_buffer_init(&BufferInitDescriptor {
+            label: Some("vertex buffer"),
+            contents: bytemuck::cast_slice(vertices.as_slice()),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+
+    let image_node = NodeId::from(0);
+
+    let output = state.surface.get_current_texture()?;
+    let view = output
+        .texture
+        .create_view(&wgpu::TextureViewDescriptor::default());
+
+    let mut encoder =
+        state
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Render Encoder"),
+            });
+
+    {
+        let attch = wgpu::RenderPassColorAttachment {
+            view: &view,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Clear(wgpu::Color {
+                    r: 0.0,
+                    g: 0.0,
+                    b: 0.0,
+                    a: 1.0,
+                }),
+                store: true,
+            },
+        };
+
+        let desc = wgpu::RenderPassDescriptor {
+            label: Some("render pass"),
+            color_attachments: &[Some(attch)],
+            depth_stencil_attachment: None,
+        };
+        let mut pass = encoder.begin_render_pass(&desc);
+
+
+        pass.set_pipeline(&graphics.pipeline);
+        pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+
+        pass.draw(0..6, 0..1);
+    }
+
+    state.queue.submit(std::iter::once(encoder.finish()));
+    output.present();
+    
+    std::thread::sleep(std::time::Duration::from_millis(2000));
+
+
     dbg!();
 
     Ok(())
 }
 
 pub fn main() {
-    env_logger::init();
-    log::error!("logging!");
+    env_logger::builder()
+        .filter_level(log::LevelFilter::Warn)
+        .init();
+
     if let Err(e) = pollster::block_on(run()) {
         log::error!("{:?}", e);
     }

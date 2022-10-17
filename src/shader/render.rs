@@ -18,8 +18,8 @@ pub struct GraphicsPipeline {
     pub vertex: VertexShaderInstance,
     pub fragment: FragmentShaderInstance,
 
-    pipeline_layout: wgpu::PipelineLayout,
-    pipeline: wgpu::RenderPipeline,
+    pub pipeline_layout: wgpu::PipelineLayout,
+    pub pipeline: wgpu::RenderPipeline,
     // fragment_push: Option<PushConstants>,
 }
 
@@ -798,7 +798,8 @@ fn naga_to_wgpu_texture_format(
         // (Some(Size::Quad), Kind::Float, 4) => Some(Tx::Rgba32Float),
         (None, Kind::Float, 4) => Some(Tx::R8Unorm),
         (Some(Size::Bi), Kind::Float, 4) => Some(Tx::Rg8Unorm),
-        (Some(Size::Quad), Kind::Float, 4) => Some(Tx::Rgba8Unorm),
+        // (Some(Size::Quad), Kind::Float, 4) => Some(Tx::Rgba8Unorm),
+        (Some(Size::Quad), Kind::Float, 4) => Some(Tx::Bgra8UnormSrgb),
         _ => None,
     }
 }
