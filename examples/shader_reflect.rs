@@ -281,9 +281,9 @@ pub fn main() -> anyhow::Result<()> {
 
     // compute();
     // vertex();
-    // fragment()?;
+    fragment()?;
 
-    froggy()?;
+    // froggy()?;
 
     Ok(())
 }

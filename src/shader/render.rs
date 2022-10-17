@@ -532,49 +532,6 @@ pub fn find_fragment_var_location_map(
 
     let mut iteration = Iteration::new();
 
-    /*
-    global(global_id, var_name).
-
-    struct_ix_location(mem_ix, location).
-
-    expr_load(expr_id, expr_id).
-    expr_global(expr_id, global_id).
-    expr_out_ix(expr_id, mem_ix).
-
-
-    expr_compose_ptr(expr_id, (expr_id, comp_ix))?
-
-    we want to find (var_name, location):
-
-    expr_out_ix(X, mem_ix)
-      :- expr_out_ix(Y, mem_ix),
-         expr_load(X, Y).
-
-    expr_global(X, global_id)
-      :- expr_global(Y, global_id),
-         expr_load(X, Y).
-
-    global_mem(global_id, mem_ix)
-      :- expr_global(expr_id, global_id),
-         expr_out_ix(expr_id, mem_ix).
-
-    mem_global(mem_ix, global_id) :- global_mem(global_id, mem_ix).
-
-    global_loc(global_id, location)
-      :- mem_global(mem_ix, global_id),
-         struct_ix_location(mem_ix, location).
-
-    global_var_location(global_id, var_name, location)
-      :- global_mem(global_id, mem_ix),
-         struct_ix_location(mem_ix, location),
-         global(global_id, var_name).
-
-    */
-
-
-    // new variables
-    
-
     type Expr = Handle<Expression>;
     type Global = usize;
 
@@ -587,12 +544,6 @@ pub fn find_fragment_var_location_map(
 
     let result_ix_location =
         iteration.variable::<(usize, u32)>("result_ix_location");
-
-    let util_struct_load =
-        iteration.variable::<(Expr, (usize, Expr))>("util_struct_load");
-
-    let global_return = iteration.variable::<(usize, Global)>("global_return");
-    let global_loc = iteration.variable::<(Global, u32)>("global_loc");
 
     let entry_point = &module.entry_points[0].function;
 
@@ -687,10 +638,20 @@ pub fn find_fragment_var_location_map(
     }
 
     // the expression ID that is returned by the shader function
-    let return_expr = Relation::from_iter(Some(return_value_expr_id));
-    let rel_struct_loads = expr_struct_load.clone().complete();
+    let return_expr_rel = Relation::from_iter(Some(return_value_expr_id.clone()));
+    let return_expr = iteration.variable("return_expr");
+    return_expr.extend(return_expr_rel.elements.iter().map(|i| (*i, ())));
 
-    
+    let util_struct_load =
+        iteration.variable::<(Expr, (usize, Expr))>("util_struct_load");
+
+    let global_return =
+        iteration.variable::<(Expr, (usize, Global))>("global_return");
+    let global_loc = iteration.variable::<(Global, u32)>("global_loc");
+
+    let global_result_ix =
+        iteration.variable::<(usize, Global)>("global_result_ix");
+
     let result = iteration.variable::<(Global, (String, u32))>("result");
 
     while iteration.changed() {
@@ -704,9 +665,17 @@ pub fn find_fragment_var_location_map(
                  result_ix_location(ix, location).
         */
 
-        // helper
-        // util_struct_load(ptr, (ix, return_id))
-        //    :- expr_struct_load(return_id, (ix, ptr))
+        /* util_struct_load(dst, (0, return_id))
+             :- return_expr(return_id),  expr_load(return_id, dst).
+         */
+        util_struct_load.from_join(&return_expr, &expr_load, 
+        |return_id, _, dst| {
+            (*dst, (0, *return_id))
+        });
+
+        /* util_struct_load(ptr, (ix, return_id))
+           :- expr_struct_load(return_id, (ix, ptr))
+         */
         util_struct_load
             .from_map(&expr_struct_load, |(return_id, (ix, ptr))| {
                 (*ptr, (*ix, *return_id))
@@ -723,24 +692,33 @@ pub fn find_fragment_var_location_map(
         );
 
         /*
-           global_return(ix, global_id)
+           global_return(return_id, (ix, global_id))
              :- util_struct_load(ptr, (ix, return_id)),
                 expr_global(ptr, global_id).
         */
         global_return.from_join(
             &util_struct_load,
             &expr_global,
-            |ptr, (ix, return_id), global_id| (*ix, *global_id),
+            |ptr, (ix, return_id), global_id| (*return_id, (*ix, *global_id)),
         );
 
-        /*
-          global_loc(global_id, location)
-           :- global_return(ix, global_id),
-              result_ix_location(ix, location).
+        /*  global_result_ix(ix, global_id)
+              :- global_return(return_id, (ix, global_id)),
+                 return_expr(return_id).
+        */
+        global_result_ix.from_join(
+            &global_return,
+            &return_expr,
+            |return_id, (ix, global_id), _| (*ix, *global_id),
+        );
+
+        /*  global_loc(global_id, location)
+              :- global_result_ix(ix, global_id),
+                 result_ix_location
         */
 
         global_loc.from_join(
-            &global_return,
+            &global_result_ix,
             &result_ix_location,
             |ix, g_id, loc| (*g_id, *loc),
         );
@@ -757,6 +735,8 @@ pub fn find_fragment_var_location_map(
         .into_iter()
         .map(|(_, s)| s)
         .collect::<Vec<_>>();
+
+        dbg!();
 
     result
 }
