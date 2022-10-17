@@ -15,20 +15,114 @@ use super::{interface::PushConstants, *};
 
 #[derive(Debug)]
 pub struct GraphicsPipeline {
-    vertex: Arc<VertexShaderInstance>,
-    // fragmentshader: Arc<FragmentShaderInstance>,
+    pub vertex: Arc<VertexShaderInstance>,
+    pub fragment: Arc<FragmentShaderInstance>,
+
+    pipeline_layout: wgpu::PipelineLayout,
     pipeline: wgpu::RenderPipeline,
     // fragment_push: Option<PushConstants>,
+}
+
+impl GraphicsPipeline {
+    pub fn new(
+        state: &crate::State,
+        vertex: &Arc<VertexShaderInstance>,
+        fragment: &Arc<FragmentShaderInstance>,
+    ) -> Result<Self> {
+        let mut vertex_buffers = Vec::new();
+
+        let vertex_state = {
+            for (ix, attrs) in vertex.vertex_buffer_layouts.iter().enumerate() {
+                let array_stride = vertex.vertex_buffer_strides[ix];
+                let step_mode = vertex.vertex_step_modes[ix];
+
+                let buffer = wgpu::VertexBufferLayout {
+                    array_stride,
+                    step_mode,
+                    attributes: attrs.as_slice(),
+                };
+                vertex_buffers.push(buffer);
+            }
+
+            wgpu::VertexState {
+                module: &vertex.shader.shader_module,
+                entry_point: vertex.shader.entry_point.name.as_str(),
+                buffers: vertex_buffers.as_slice(),
+            }
+        };
+
+        let pipeline_layout = {
+            let stages = [
+                (&vertex.push_constants, wgpu::ShaderStages::VERTEX),
+                (&fragment.push_constants, wgpu::ShaderStages::FRAGMENT),
+            ];
+
+            let ranges = stages
+                .iter()
+                .filter_map(|(p, s)| p.as_ref().map(|p| p.to_range(*s)))
+                .collect::<Vec<_>>();
+
+            let stages = [
+                vertex.shader.bind_group_layouts.as_slice(),
+                fragment.shader.bind_group_layouts.as_slice(),
+            ];
+
+            let layouts = stages.into_iter().flatten().collect::<Vec<_>>();
+
+            let desc = wgpu::PipelineLayoutDescriptor {
+                label: None,
+                bind_group_layouts: layouts.as_slice(),
+                push_constant_ranges: ranges.as_slice(),
+            };
+
+            state.device.create_pipeline_layout(&desc)
+        };
+
+        let primitive = wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: None,
+            polygon_mode: wgpu::PolygonMode::Fill,
+
+            strip_index_format: None,
+            unclipped_depth: false,
+            conservative: false,
+        };
+
+        let multisample = wgpu::MultisampleState {
+            count: 1,
+            mask: !0,
+            alpha_to_coverage_enabled: false,
+        };
+
+        let pipeline_desc = wgpu::RenderPipelineDescriptor {
+            label: Some("render pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: vertex_state,
+            primitive,
+            depth_stencil: None,
+            multisample,
+            fragment: todo!(),
+            multiview: todo!(),
+        };
+
+        let pipeline = state.device.create_render_pipeline(&pipeline_desc);
+
+        let vertex = vertex.clone();
+        let fragment = fragment.clone();
+
+        todo!();
+    }
 }
 
 #[derive(Debug)]
 pub struct VertexShaderInstance {
     shader: Arc<VertexShader>,
-    push_constants: Option<PushConstants>,
+    pub push_constants: Option<PushConstants>,
 
-    vertex_step_modes: Vec<wgpu::VertexStepMode>,
-    vertex_buffer_strides: Vec<u64>,
-    vertex_buffer_layouts: Vec<Vec<wgpu::VertexAttribute>>,
+    pub vertex_step_modes: Vec<wgpu::VertexStepMode>,
+    pub vertex_buffer_strides: Vec<u64>,
+    pub vertex_buffer_layouts: Vec<Vec<wgpu::VertexAttribute>>,
 }
 
 impl VertexShaderInstance {
@@ -60,6 +154,24 @@ impl VertexShaderInstance {
             vertex_buffer_strides,
             vertex_buffer_layouts,
         }
+    }
+}
+
+#[derive(Debug)]
+pub struct FragmentShaderInstance {
+    shader: Arc<FragmentShader>,
+
+    pub push_constants: Option<interface::PushConstants>,
+}
+
+impl FragmentShaderInstance {
+    pub fn from_shader(shader: &Arc<FragmentShader>) -> Result<Self> {
+        let mut result = Self {
+            shader: shader.clone(),
+            push_constants: shader.push_constants.clone(),
+        };
+
+        Ok(result)
     }
 }
 
@@ -525,6 +637,8 @@ pub fn find_fragment_var_location_map(
     let global_var_loc =
         iteration.variable::<(usize, (String, u32))>("global_var_loc");
 
+    let expr_load = expr_load.complete();
+
     while iteration.changed() {
         mem_global.from_map(&global_mem, |(g_id, mem_ix)| (*mem_ix, *g_id));
 
@@ -567,6 +681,8 @@ pub fn find_fragment_var_location_map(
                 (*global_id, *location) //
             },
         );
+
+        // global_var_loc.from_leapjoin(
 
         global_var_loc.from_join(
             &globals,
