@@ -1,4 +1,4 @@
-use naga::{Expression, Handle, VectorSize};
+use naga::{Expression, Handle, ScalarKind, VectorSize};
 use rustc_hash::{FxHashMap, FxHashSet};
 use wgpu::*;
 
@@ -24,6 +24,19 @@ pub struct GraphicsPipeline {
 }
 
 impl GraphicsPipeline {
+    // NB: only supports disjoint ranges for vertex and fragment for now
+    pub fn push_constant_ranges(&self) -> Vec<wgpu::PushConstantRange> {
+        let vx = self.vertex.push_constants.as_ref();
+        let fg = self.fragment.push_constants.as_ref();
+
+        use wgpu::ShaderStages as S;
+
+        [(S::VERTEX, vx), (S::FRAGMENT, fg)]
+            .into_iter()
+            .filter_map(|(stage, pc)| Some(pc?.to_range(stage)))
+            .collect()
+    }
+
     pub fn new(
         state: &crate::State,
         vertex: VertexShaderInstance,
@@ -32,12 +45,14 @@ impl GraphicsPipeline {
         let vertex_buffers = vertex.create_buffer_layouts();
         let vertex_state = vertex.create_vertex_state(&vertex_buffers);
 
+
         let mut color_targets = Vec::new();
         let fragment_state = {
             // TODO blend and write_mask should be configurable
-            for output in fragment.shader.fragment_outputs.iter() {
+
+            for format in fragment.attachment_formats.iter() {
                 let state = wgpu::ColorTargetState {
-                    format: output.format,
+                    format: *format,
                     blend: Some(wgpu::BlendState::REPLACE),
                     write_mask: wgpu::ColorWrites::ALL,
                 };
@@ -200,13 +215,46 @@ impl VertexShaderInstance {
 pub struct FragmentShaderInstance {
     shader: Arc<FragmentShader>,
 
+    attachment_formats: Vec<wgpu::TextureFormat>,
+    depth_format: Option<wgpu::TextureFormat>,
+
     pub push_constants: Option<interface::PushConstants>,
 }
 
 impl FragmentShaderInstance {
-    pub fn from_shader(shader: &Arc<FragmentShader>) -> Result<Self> {
-        let mut result = Self {
+    // attch_formats must be in location order and
+    // match the fragment shader outputs
+    pub fn from_shader(
+        shader: &Arc<FragmentShader>,
+        attch_formats: &[wgpu::TextureFormat],
+    ) -> Result<Self> {
+        // let mut attchs = Vec::new();
+
+        let attchs = attch_formats.iter().copied().collect::<Vec<_>>();
+
+        /*
+        for output in shader.fragment_outputs.iter() {
+            let ix = output.location as usize;
+            let format = attch_formats[ix];
+
+            let sizes = output.sizes;
+        }
+        
+        let attachment_formats: Vec<_> = attch_formats
+            .iter()
+            .map(|fmt| {
+                todo!();
+            })
+            .collect();
+        */
+
+
+        let result = Self {
             shader: shader.clone(),
+
+            attachment_formats: attchs,
+            depth_format: None,
+
             push_constants: shader.push_constants.clone(),
         };
 
@@ -357,7 +405,8 @@ impl VertexShader {
 pub struct FragmentOutput {
     pub name: String,
     pub location: u32,
-    pub format: TextureFormat,
+    // pub format: TextureFormat,
+    pub sizes: (Option<VectorSize>, ScalarKind, u8),
 }
 
 #[derive(Debug)]
@@ -442,18 +491,15 @@ impl FragmentShader {
                         anyhow::bail!("No output found on fragment shader");
                     };
 
-                let format =
+                let sizes =
                     naga_type_inner_sizes(&naga_mod.types[result.ty].inner)
-                        .and_then(|(size, kind, width)| {
-                            naga_to_wgpu_texture_format(size, kind, width)
-                        })
-                        .expect("unsupported vertex type or format");
+                        .expect("unsupported fragment output type");
 
                 let name = find_name_by_loc(location).unwrap();
                 let output = FragmentOutput {
                     name: name.into(),
                     location,
-                    format,
+                    sizes,
                 };
                 fragment_outputs.push(output);
             } else {
@@ -480,19 +526,16 @@ impl FragmentShader {
                                 "location missing from fragment shader output",
                             );
 
-                        let format = naga_type_inner_sizes(
+                        let sizes = naga_type_inner_sizes(
                             &naga_mod.types[mem.ty].inner,
                         )
-                        .and_then(|(size, kind, width)| {
-                            naga_to_wgpu_texture_format(size, kind, width)
-                        })
-                        .expect("unsupported vertex type or format");
+                        .expect("unsupported fragment output type");
 
                         let name = find_name_by_loc(location).unwrap();
                         let output = FragmentOutput {
                             name: name.into(),
                             location,
-                            format,
+                            sizes,
                         };
                         fragment_outputs.push(output);
                     }
@@ -638,7 +681,8 @@ pub fn find_fragment_var_location_map(
     }
 
     // the expression ID that is returned by the shader function
-    let return_expr_rel = Relation::from_iter(Some(return_value_expr_id.clone()));
+    let return_expr_rel =
+        Relation::from_iter(Some(return_value_expr_id.clone()));
     let return_expr = iteration.variable("return_expr");
     return_expr.extend(return_expr_rel.elements.iter().map(|i| (*i, ())));
 
@@ -666,16 +710,17 @@ pub fn find_fragment_var_location_map(
         */
 
         /* util_struct_load(dst, (0, return_id))
-             :- return_expr(return_id),  expr_load(return_id, dst).
-         */
-        util_struct_load.from_join(&return_expr, &expr_load, 
-        |return_id, _, dst| {
-            (*dst, (0, *return_id))
-        });
+            :- return_expr(return_id),  expr_load(return_id, dst).
+        */
+        util_struct_load.from_join(
+            &return_expr,
+            &expr_load,
+            |return_id, _, dst| (*dst, (0, *return_id)),
+        );
 
         /* util_struct_load(ptr, (ix, return_id))
-           :- expr_struct_load(return_id, (ix, ptr))
-         */
+          :- expr_struct_load(return_id, (ix, ptr))
+        */
         util_struct_load
             .from_map(&expr_struct_load, |(return_id, (ix, ptr))| {
                 (*ptr, (*ix, *return_id))
@@ -736,7 +781,7 @@ pub fn find_fragment_var_location_map(
         .map(|(_, s)| s)
         .collect::<Vec<_>>();
 
-        dbg!();
+    dbg!();
 
     result
 }
@@ -802,4 +847,163 @@ fn naga_to_wgpu_texture_format(
         (Some(Size::Quad), Kind::Float, 4) => Some(Tx::Bgra8UnormSrgb),
         _ => None,
     }
+}
+
+
+fn valid_fragment_formats(
+    vec_size: Option<naga::VectorSize>,
+    kind: naga::ScalarKind,
+    width: u8,
+    srgb: bool,
+) -> Vec<wgpu::TextureFormat> {
+    use naga::ScalarKind as Kind;
+    use naga::VectorSize as Size;
+    use wgpu::TextureFormat as Tx;
+
+    let mut out = Vec::new();
+
+    match (vec_size, kind, width) {
+        (None, Kind::Uint, 4) => {
+            out.push(Tx::R32Uint);
+        }
+        (Some(Size::Bi), Kind::Uint, 4) => {
+            out.push(Tx::Rg32Uint);
+        }
+        (Some(Size::Quad), Kind::Uint, 4) => {
+            out.push(Tx::Rgba32Uint);
+        }
+        (None, Kind::Sint, 4) => {
+            out.push(Tx::R32Sint);
+        }
+        (Some(Size::Bi), Kind::Sint, 4) => {
+            out.push(Tx::Rg32Sint);
+        }
+        (Some(Size::Quad), Kind::Sint, 4) => {
+            out.push(Tx::Rgba32Sint);
+        }
+        // (None, Kind::Float, 4) => {
+        //
+        // out.push(Tx::R32Float);
+        // }
+        // (Some(Size::Bi), Kind::Float, 4) => {
+        //
+        // out.push(Tx::Rg32Float);
+        // }
+        // (Some(Size::Quad), Kind::Float, 4) => {
+        //
+        // out.push(Tx::Rgba32Float);
+        // }
+        (None, Kind::Float, 4) => {
+            out.push(Tx::R8Unorm);
+            out.push(Tx::R32Float); // maybe???
+        }
+        (Some(Size::Bi), Kind::Float, 4) => {
+            out.push(Tx::Rg8Unorm);
+        }
+        // (Some(Size::Quad), Kind::Float, 4) => {
+        //
+        // out.push(Tx::Rgba8Unorm);
+        // }
+        (Some(Size::Quad), Kind::Float, 4) => {
+            if srgb {
+                out.push(Tx::Rgba8UnormSrgb);
+                out.push(Tx::Bgra8UnormSrgb);
+            } else {
+                out.push(Tx::Rgba8Unorm);
+                out.push(Tx::Bgra8Unorm);
+                out.push(Tx::Rgba8UnormSrgb);
+                out.push(Tx::Bgra8UnormSrgb);
+            }
+        }
+        _ => (),
+    };
+
+    out
+}
+
+fn validate_fragment_format(
+    format: wgpu::TextureFormat,
+    vec_size: Option<naga::VectorSize>,
+    kind: naga::ScalarKind,
+    width: u8,
+) -> bool {
+    match (format) {
+        TextureFormat::R8Unorm => todo!(),
+        TextureFormat::R8Snorm => todo!(),
+        TextureFormat::R8Uint => todo!(),
+        TextureFormat::R8Sint => todo!(),
+        //
+        TextureFormat::R16Uint => todo!(),
+        TextureFormat::R16Sint => todo!(),
+        TextureFormat::R16Unorm => todo!(),
+        TextureFormat::R16Snorm => todo!(),
+        TextureFormat::R16Float => todo!(),
+        //
+        TextureFormat::Rg8Unorm => todo!(),
+        TextureFormat::Rg8Snorm => todo!(),
+        TextureFormat::Rg8Uint => todo!(),
+        TextureFormat::Rg8Sint => todo!(),
+        //
+        TextureFormat::R32Uint => todo!(),
+        TextureFormat::R32Sint => todo!(),
+        TextureFormat::R32Float => todo!(),
+        //
+        TextureFormat::Rg16Uint => todo!(),
+        TextureFormat::Rg16Sint => todo!(),
+        TextureFormat::Rg16Unorm => todo!(),
+        TextureFormat::Rg16Snorm => todo!(),
+        TextureFormat::Rg16Float => todo!(),
+        //
+        TextureFormat::Rgba8Unorm => todo!(),
+        TextureFormat::Rgba8UnormSrgb => todo!(),
+        TextureFormat::Rgba8Snorm => todo!(),
+        TextureFormat::Rgba8Uint => todo!(),
+        TextureFormat::Rgba8Sint => todo!(),
+        TextureFormat::Bgra8Unorm => todo!(),
+        TextureFormat::Bgra8UnormSrgb => todo!(),
+        TextureFormat::Rgb10a2Unorm => todo!(),
+        TextureFormat::Rg11b10Float => todo!(),
+        TextureFormat::Rg32Uint => todo!(),
+        TextureFormat::Rg32Sint => todo!(),
+        TextureFormat::Rg32Float => todo!(),
+        TextureFormat::Rgba16Uint => todo!(),
+        TextureFormat::Rgba16Sint => todo!(),
+        TextureFormat::Rgba16Unorm => todo!(),
+        TextureFormat::Rgba16Snorm => todo!(),
+        TextureFormat::Rgba16Float => todo!(),
+        TextureFormat::Rgba32Uint => todo!(),
+        TextureFormat::Rgba32Sint => todo!(),
+        TextureFormat::Rgba32Float => todo!(),
+        TextureFormat::Depth32Float => todo!(),
+        TextureFormat::Depth32FloatStencil8 => todo!(),
+        TextureFormat::Depth24Plus => todo!(),
+        TextureFormat::Depth24PlusStencil8 => todo!(),
+        TextureFormat::Depth24UnormStencil8 => todo!(),
+        TextureFormat::Rgb9e5Ufloat => todo!(),
+        TextureFormat::Bc1RgbaUnorm => todo!(),
+        TextureFormat::Bc1RgbaUnormSrgb => todo!(),
+        TextureFormat::Bc2RgbaUnorm => todo!(),
+        TextureFormat::Bc2RgbaUnormSrgb => todo!(),
+        TextureFormat::Bc3RgbaUnorm => todo!(),
+        TextureFormat::Bc3RgbaUnormSrgb => todo!(),
+        TextureFormat::Bc4RUnorm => todo!(),
+        TextureFormat::Bc4RSnorm => todo!(),
+        TextureFormat::Bc5RgUnorm => todo!(),
+        TextureFormat::Bc5RgSnorm => todo!(),
+        TextureFormat::Bc6hRgbUfloat => todo!(),
+        TextureFormat::Bc6hRgbSfloat => todo!(),
+        TextureFormat::Bc7RgbaUnorm => todo!(),
+        TextureFormat::Bc7RgbaUnormSrgb => todo!(),
+        TextureFormat::Etc2Rgb8Unorm => todo!(),
+        TextureFormat::Etc2Rgb8UnormSrgb => todo!(),
+        TextureFormat::Etc2Rgb8A1Unorm => todo!(),
+        TextureFormat::Etc2Rgb8A1UnormSrgb => todo!(),
+        TextureFormat::Etc2Rgba8Unorm => todo!(),
+        TextureFormat::Etc2Rgba8UnormSrgb => todo!(),
+        TextureFormat::EacR11Unorm => todo!(),
+        TextureFormat::EacR11Snorm => todo!(),
+        TextureFormat::EacRg11Unorm => todo!(),
+        TextureFormat::EacRg11Snorm => todo!(),
+        TextureFormat::Astc { block, channel } => todo!(),
+    };
 }

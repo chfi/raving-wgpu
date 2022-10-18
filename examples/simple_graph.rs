@@ -29,6 +29,8 @@ pub async fn run_compute() -> anyhow::Result<()> {
     let done = graph.prepare_node(2.into())?;
     let done = graph.prepare_node(1.into())?;
 
+    // graph.nodes[2].
+
     graph.allocate_node_resources(&state)?;
 
     log::error!("Complete!");
@@ -210,13 +212,6 @@ pub async fn run() -> anyhow::Result<()> {
 
     let dims = [size.width, size.height];
 
-    let mut graph = raving_wgpu::graph::example_graph(&mut state, dims)?;
-    graph.prepare_node(0.into())?;
-    graph.prepare_node(2.into())?;
-    graph.prepare_node(1.into())?;
-
-    graph.allocate_node_resources(&state)?;
-
     // texture is in node 0
 
     dbg!();
@@ -231,6 +226,7 @@ pub async fn run() -> anyhow::Result<()> {
     dbg!();
     let frag_src = include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),
+        // "/shaders/shader.frag.spv"
         "/shaders/uv_rb.frag.spv"
     ));
 
@@ -248,7 +244,10 @@ pub async fn run() -> anyhow::Result<()> {
     );
     dbg!();
 
-    let frag_inst = FragmentShaderInstance::from_shader(&frag)?;
+    let frag_inst = FragmentShaderInstance::from_shader(
+        &frag,
+        &[wgpu::TextureFormat::Bgra8UnormSrgb],
+    )?;
     dbg!();
 
     let graphics = GraphicsPipeline::new(&state, vert_inst, frag_inst)?;
@@ -275,8 +274,6 @@ pub async fn run() -> anyhow::Result<()> {
             contents: bytemuck::cast_slice(vertices.as_slice()),
             usage: wgpu::BufferUsages::VERTEX,
         });
-
-    let image_node = NodeId::from(0);
 
     let output = state.surface.get_current_texture()?;
     let view = output
@@ -312,18 +309,18 @@ pub async fn run() -> anyhow::Result<()> {
         };
         let mut pass = encoder.begin_render_pass(&desc);
 
-
         pass.set_pipeline(&graphics.pipeline);
         pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+
+        // pass.set_bind_group(index, bind_group, offsets)
 
         pass.draw(0..6, 0..1);
     }
 
     state.queue.submit(std::iter::once(encoder.finish()));
     output.present();
-    
-    std::thread::sleep(std::time::Duration::from_millis(2000));
 
+    std::thread::sleep(std::time::Duration::from_millis(2000));
 
     dbg!();
 

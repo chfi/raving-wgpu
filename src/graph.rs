@@ -531,16 +531,6 @@ impl std::fmt::Debug for Node {
     }
 }
 
-pub struct ComputeShaderOp {
-    shader: Arc<crate::shader::ComputeShader>,
-    // mapping from compute shader global var. name to local socket
-    resource_map: HashMap<String, LocalSocketRef>,
-
-    pub bind_groups: Vec<BindGroup>,
-
-    push_constants: Option<PushConstants>,
-}
-
 pub trait ExecuteNode {
     // fn execute(&self, graph: &Graph, cmd: &mut CommandEncoder) -> Result<()>;
     fn execute(
@@ -565,10 +555,83 @@ pub trait ExecuteNode {
     ) -> Result<Vec<BindGroup>>;
 }
 
+
+pub struct ComputeShaderOp {
+    shader: Arc<crate::shader::ComputeShader>,
+    // mapping from compute shader global var. name to local socket
+    resource_map: HashMap<String, LocalSocketRef>,
+
+    pub bind_groups: Vec<BindGroup>,
+
+    workgroup_counts: [u32; 3],
+
+    push_constants: Option<PushConstants>,
+}
+
+pub struct GraphicsPipelineOp {
+    pipeline: Arc<crate::shader::render::GraphicsPipeline>,
+    resource_map: HashMap<String, LocalSocketRef>,
+
+    pub bind_groups: Vec<BindGroup>,
+}
+
+impl ExecuteNode for GraphicsPipelineOp {
+    fn execute(
+        &self,
+        ctx: &NodeResourceCtx<'_>,
+        cmd: &mut CommandEncoder,
+    ) -> Result<()> {
+        todo!()
+    }
+
+    fn set_bind_groups(&mut self, bind_groups: Vec<BindGroup>) {
+        self.bind_groups = bind_groups;
+    }
+
+    fn create_bind_groups(
+        &self,
+        node: &Node,
+        state: &crate::State,
+        resources: &[Resource],
+    ) -> Result<Vec<BindGroup>> {
+        /* 
+        let mut binding_map = HashMap::default();
+
+        for (g_var, socket) in &self.resource_map {
+            let res_id = match socket {
+                LocalSocketRef::Input { socket_name } => node
+                    .inputs
+                    .get(socket_name)
+                    .and_then(|socket| socket.resource),
+                LocalSocketRef::Output { socket_name } => node
+                    .outputs
+                    .get(socket_name)
+                    .and_then(|socket| socket.resource),
+            }
+            .ok_or_else(|| anyhow!("Socket `{:?}` not found", socket))?;
+
+            binding_map.insert(g_var.into(), res_id.id);
+        }
+
+        dbg!();
+        log::error!("{:#?}", binding_map);
+        */
+
+        todo!();
+
+        // self.pipeline
+            // .create_bind_groups_impl(state, resources, &binding_map)
+    }
+}
+
 impl ExecuteNode for ComputeShaderOp {
     fn set_bind_groups(&mut self, bind_groups: Vec<BindGroup>) {
         self.bind_groups = bind_groups;
     }
+
+    /*
+    fn prepare(&mut self, workgroup_counts: [u32; 3])
+     */
 
     fn create_bind_groups(
         &self,
@@ -607,6 +670,10 @@ impl ExecuteNode for ComputeShaderOp {
         ctx: &NodeResourceCtx<'_>,
         cmd: &mut CommandEncoder,
     ) -> Result<()> {
+        if self.workgroup_counts == [0, 0, 0] {
+            anyhow::bail!("Compute shader had zero workgroup count");
+        }
+        
         let mut pass =
             cmd.begin_compute_pass(&ComputePassDescriptor { label: None });
 
@@ -616,14 +683,9 @@ impl ExecuteNode for ComputeShaderOp {
             pass.set_bind_group(ix as u32, group, &[]);
         }
 
-        let [x, y, z] = self.shader.workgroup_size;
+        let [x, y, z] = self.workgroup_counts;
 
-        // TODO figure out dispatch group counts
-        let x_groups = 4;
-        let y_groups = 1;
-        // let x_groups = 800 / 16;
-        // let y_groups = 600 / 16;
-        pass.dispatch_workgroups(x_groups, y_groups, 1);
+        pass.dispatch_workgroups(x, y, z);
 
         Ok(())
     }
@@ -1168,6 +1230,7 @@ pub fn create_compute_node(
             resource_map,
             bind_groups: Vec::new(),
             push_constants,
+            workgroup_counts: [0, 0, 0],
         }
     };
 
