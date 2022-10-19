@@ -18,6 +18,7 @@ pub mod util;
 pub use graph::*;
 
 
+
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 struct Vertex {
