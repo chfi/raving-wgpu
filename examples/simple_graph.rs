@@ -368,14 +368,18 @@ pub async fn run() -> anyhow::Result<()> {
         );
     }
 
+    graph.update_transient_cache(&transient_res);
+
     let img_n1 = graph.add_node(img_s);
-    let img_n2 = graph.add_node(img_s);
+    // let img_n2 = graph.add_node(img_s);
     let gfx_n = graph.add_node(gfx_s);
     let comp_n = graph.add_node(comp_s);
 
     graph.add_link(img_n1, 0, gfx_n, 0);
-    graph.add_link(img_n2, 0, gfx_n, 1);
+    // graph.add_link(img_n2, 0, gfx_n, 1);
     graph.add_link(gfx_n, 1, comp_n, 0);
+
+    graph.add_link_from_transient("swapchain", gfx_n, 1);
 
     // graph.add_link(comp_n, 1, gfx_n, 0);
 

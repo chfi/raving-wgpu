@@ -318,6 +318,7 @@ pub struct Graph {
     node_names: FxHashMap<NodeId, rhai::ImmutableString>,
 
     socket_resources: BTreeMap<(NodeId, LocalSocketIx), ResourceId>,
+    socket_transients: BTreeMap<(NodeId, LocalSocketIx), TransientId>,
 
     // node_names: Vec<rhai::ImmutableString>,
     resource_meta: Vec<ResourceMeta>,
@@ -325,7 +326,10 @@ pub struct Graph {
 
     transient_cache_id: HashMap<rhai::ImmutableString, TransientId>,
     transient_cache: BTreeMap<TransientId, ResourceMeta>,
-    transient_links: Vec<(TransientId, (NodeId, LocalSocketIx))>,
+
+    // transient_links: BTreeMap<TransientId, Vec<(NodeId, LocalSocketIx)>>,
+    transient_links: BTreeMap<(NodeId, LocalSocketIx), TransientId>,
+    // transient_links: Vec<(TransientId, (NodeId, LocalSocketIx))>,
     // transient_resource_links: HashMap<String, Vec<(NodeId, LocalSocketIx)>>,
     // transients_meta_cache: HashMap<String, ResourceMeta>,
 }
@@ -391,11 +395,35 @@ impl Graph {
             resources: Vec::new(),
 
             socket_resources: BTreeMap::default(),
+            socket_transients: BTreeMap::default(),
 
             transient_cache_id: HashMap::default(),
             transient_cache: BTreeMap::default(),
-            transient_links: Vec::new(),
+            transient_links: BTreeMap::new(),
             // transients_meta_cache: HashMap::default(),
+        }
+    }
+
+    pub fn update_transient_cache<'a>(
+        &mut self,
+        transient_res: &'a HashMap<String, InputResource<'a>>,
+    ) {
+        for (key, in_res) in transient_res.iter() {
+            dbg!(key);
+            if let Some(id) = self.transient_cache_id.get(key.as_str()).copied()
+            {
+                let meta = in_res.metadata();
+
+                let cache = self.transient_cache.get(&id).copied();
+
+                if cache != Some(meta) {
+                    self.transient_cache.insert(id, meta);
+                }
+            } else {
+                let id = self.transient_cache.len();
+                self.transient_cache_id.insert(key.into(), id);
+                self.transient_cache.insert(id, in_res.metadata());
+            }
         }
     }
 
@@ -418,29 +446,7 @@ impl Graph {
 
         */
 
-        /*
-            update transients cache
-        */
-
-        let mut invalidated_transients = Vec::new();
-
-        for (key, in_res) in transient_res.iter() {
-            if let Some(id) = self.transient_cache_id.get(key.as_str()).copied() {
-                let meta = in_res.metadata();
-
-                let cache = self.transient_cache.get(&id).copied();
-
-                if cache != Some(meta) {
-                    self.transient_cache.insert(id, meta);
-                    invalidated_transients.push(key);
-                }
-            } else {
-                let id = self.transient_cache.len();
-                let meta = in_res.metadata();
-                self.transient_cache.insert(id, in_res.metadata());
-                invalidated_transients.push(key);
-            }
-        }
+        self.update_transient_cache(transient_res);
 
         let mut socket_origins = Vec::new();
 
@@ -523,7 +529,16 @@ impl Graph {
                 "socket_resources",
             );
 
+        let socket_transients = iteration
+            .variable::<((NodeId, LocalSocketIx), TransientId)>(
+                "socket_transients",
+            );
+
         socket_resources.extend(socket_origins.iter().copied());
+        socket_transients
+            .extend(self.transient_links.iter().map(|(&k, &v)| (k, v)));
+
+        println!("transient links: {:?}", self.transient_links);
 
         while iteration.changed() {
             socket_resources.from_join(
@@ -532,6 +547,13 @@ impl Graph {
                 |_from, &res_id, &to| (to, res_id),
             );
 
+            socket_transients.from_join(
+                &socket_transients,
+                &links,
+                |_from, &res_id, &to| (to, res_id),
+            );
+
+            /*
             socket_resources.from_join(
                 &socket_resources,
                 &inv_links,
@@ -539,13 +561,19 @@ impl Graph {
                     ((from, out_ix), res_id)
                 },
             );
+            */
         }
 
         let socket_resources = socket_resources.complete();
+        let socket_transients = socket_transients.complete();
 
         // update stored socket resources
         self.socket_resources = socket_resources.elements.into_iter().collect();
+        self.socket_transients =
+            socket_transients.elements.into_iter().collect();
+
         println!("socket_resources: {:?}", self.socket_resources);
+        println!("socket_transients: {:?}", self.socket_transients);
 
         let topo_order = self.build_topological_order()?;
 
@@ -632,6 +660,23 @@ impl Graph {
         node.links.push((src_socket, (dst, dst_socket)));
     }
 
+    pub fn add_link_from_transient(
+        &mut self,
+        transient_key: &str,
+        dst: NodeId,
+        dst_socket: LocalSocketIx,
+    ) -> Option<()> {
+        dbg!(&self.transient_cache_id);
+        let id = *self.transient_cache_id.get(transient_key)?;
+        dbg!();
+
+        self.transient_links.insert((dst, dst_socket), id);
+
+        println!("transient links: {:?}", self.transient_links);
+
+        Some(())
+    }
+
     pub fn build_topological_order(&self) -> Result<Vec<NodeId>> {
         let mut order = Vec::new();
 
@@ -716,7 +761,6 @@ impl Graph {
                 meta = *def;
             }
 
-            // TODO apply schema rules to fill out meta, here
             {
                 let source_rules = schema
                     .source_rules_sockets
@@ -731,11 +775,35 @@ impl Graph {
                         id.0,
                         src_socket
                     );
-                    let res_id =
-                        self.socket_resources.get(&(id, src_socket)).unwrap();
-                    let src_meta = &self.resource_meta[*res_id];
+
+                    let src_meta = {
+                        if let Some(t_id) =
+                            self.socket_transients.get(&(id, src_socket))
+                        {
+                            println!(
+                                "getting transient resource at socket {:?}.{}",
+                                id, src_socket
+                            );
+                            &self.transient_cache[t_id]
+                        } else {
+                            println!(
+                                "getting resource at socket {:?}.{}",
+                                id, src_socket
+                            );
+                            let res_id = self
+                                .socket_resources
+                                .get(&(id, src_socket))
+                                .unwrap();
+                            &self.resource_meta[*res_id]
+                        }
+                    };
                     meta.apply_socket_rule(src_meta, source.entry)?;
                 }
+            }
+
+            // rules from transients
+            {
+                // let rules = schema.
             }
 
             // if there's an applicable constructor, give it the preliminary
@@ -839,7 +907,10 @@ impl Graph {
             let default_source = ResourceMeta::Texture {
                 size: None,
                 format: None,
-                usage: Some(wgpu::TextureUsages::all()),
+                usage: Some(
+                    wgpu::TextureUsages::TEXTURE_BINDING
+                        | wgpu::TextureUsages::RENDER_ATTACHMENT,
+                ),
             };
             let mut default_sources = FxHashMap::default();
 
