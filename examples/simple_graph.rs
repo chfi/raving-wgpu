@@ -349,12 +349,16 @@ pub async fn run() -> anyhow::Result<()> {
 
     let transient_res: HashMap<String, InputResource<'_>> = HashMap::default();
 
-    let img_n = graph.add_node(img_s);
+    let img_n1 = graph.add_node(img_s);
+    let img_n2 = graph.add_node(img_s);
     let gfx_n = graph.add_node(gfx_s);
     let comp_n = graph.add_node(comp_s);
 
-    graph.add_link(img_n, 0, gfx_n, 0);
+    graph.add_link(img_n1, 0, gfx_n, 0);
+    graph.add_link(img_n2, 0, gfx_n, 1);
     graph.add_link(gfx_n, 1, comp_n, 0);
+
+    // graph.add_link(comp_n, 1, gfx_n, 0);
 
     let mut graph_scalars = rhai::Map::default();
     graph_scalars.insert("dimensions".into(), rhai::Dynamic::from(dims));
@@ -366,6 +370,8 @@ pub async fn run() -> anyhow::Result<()> {
     } else {
         log::error!("graph validation error");
     }
+
+    let sub_index = graph.execute(&state, &transient_res, &graph_scalars)?;
 
     Ok(())
 }

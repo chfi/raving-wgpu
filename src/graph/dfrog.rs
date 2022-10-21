@@ -37,24 +37,6 @@ pub struct NodeSchema {
     >,
 }
 
-/*
-fn create_image_schema(schema_id: NodeSchemaId) -> NodeSchema {
-    let socket_names = Relation::from_iter(["image".to_string()]);
-    let source_sockets = Relation::from_iter([(0, DataType::Texture)]);
-
-    NodeSchema {
-        node_type: NodeType::Resource,
-        schema_id,
-
-        socket_names,
-        source_sockets,
-        source_rules_sockets: Relation::from_vec(Vec::new()),
-
-        default_sources:
-    }
-}
-*/
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ResourceMetadataEntry {
     BufferSize,
@@ -63,6 +45,24 @@ pub enum ResourceMetadataEntry {
     TextureSize,
     TextureFormat,
     TextureUsage,
+}
+
+impl ResourceMetadataEntry {
+    fn is_buffer(&self) -> bool {
+        match self {
+            Self::BufferSize | Self::BufferUsage => true,
+            _ => false,
+        }
+    }
+
+    fn is_texture(&self) -> bool {
+        match self {
+            Self::TextureSize | Self::TextureFormat | Self::TextureUsage => {
+                true
+            }
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -154,6 +154,134 @@ pub enum ResourceMeta {
 }
 
 impl ResourceMeta {
+    pub fn is_buffer(&self) -> bool {
+        matches!(self, Self::Buffer { .. })
+    }
+
+    pub fn is_texture(&self) -> bool {
+        matches!(self, Self::Texture { .. })
+    }
+
+    fn apply_socket_rule(
+        &mut self,
+        other_res: &ResourceMeta,
+        rule: ResourceMetadataEntry,
+    ) -> Result<()> {
+        if (self.is_buffer() && rule.is_texture())
+            || (self.is_texture() && rule.is_buffer())
+        {
+            anyhow::bail!("Rule did not match resource type");
+        }
+
+        if let ResourceMeta::Buffer { size, usage, .. } = self {
+            if other_res.is_texture() {
+                anyhow::bail!("Source resource did not match self");
+            }
+
+            if let ResourceMeta::Buffer {
+                size: other_size,
+                usage: other_usage,
+                ..
+            } = other_res
+            {
+                match rule {
+                    ResourceMetadataEntry::BufferSize => {
+                        *size = *other_size;
+                    }
+                    ResourceMetadataEntry::BufferUsage => {
+                        *usage = *other_usage;
+                    }
+
+                    _ => (),
+                }
+            }
+        } else if let ResourceMeta::Texture {
+            size,
+            format,
+            usage,
+        } = self
+        {
+            if other_res.is_buffer() {
+                anyhow::bail!("Source resource did not match self");
+            }
+            if let ResourceMeta::Texture {
+                size: o_size,
+                format: o_format,
+                usage: o_usage,
+            } = other_res
+            {
+                match rule {
+                    ResourceMetadataEntry::TextureSize => {
+                        *size = *o_size;
+                    }
+                    ResourceMetadataEntry::TextureFormat => {
+                        *format = *o_format;
+                    }
+                    ResourceMetadataEntry::TextureUsage => {
+                        *usage = *o_usage;
+                    }
+                    _ => (),
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn allocate(&self, state: &State) -> Result<Resource> {
+        match self {
+            ResourceMeta::Buffer {
+                size,
+                usage,
+                stride,
+            } => {
+                if size.is_none() || usage.is_none() {
+                    anyhow::bail!(
+                        "Can't allocate buffer without known size and usage"
+                    );
+                }
+
+                let buffer =
+                    state.device.create_buffer(&wgpu::BufferDescriptor {
+                        label: None,
+                        size: size.unwrap() as u64,
+                        usage: usage.unwrap(),
+                        mapped_at_creation: false,
+                    });
+
+                Ok(Resource::Buffer(buffer))
+            }
+            ResourceMeta::Texture {
+                size,
+                format,
+                usage,
+            } => {
+                if size.is_none() || format.is_none() || usage.is_none() {
+                    dbg!(size);
+                    dbg!(format);
+                    dbg!(usage);
+                    anyhow::bail!("Can't allocate image without known size, format, and usage");
+                }
+
+                let [width, height] = size.unwrap();
+                let format = format.unwrap();
+                let usage = usage.unwrap();
+
+                let texture = crate::texture::Texture::new(
+                    &state.device,
+                    &state.queue,
+                    width as usize,
+                    height as usize,
+                    format,
+                    usage,
+                    None,
+                )?;
+
+                Ok(Resource::Texture(texture))
+            }
+        }
+    }
+
     pub fn buffer_default() -> Self {
         Self::Buffer {
             size: None,
@@ -315,6 +443,8 @@ impl Graph {
             }
         }
 
+        println!("socket_origins: {:?}", socket_origins);
+
         // now, build the relations for the datafrog programs
 
         // node(node_id, schema_id).
@@ -357,6 +487,10 @@ impl Graph {
            :- socket_resources((from_id, out_ix), res_id),
               links((from_id, out_ix), (to_id, in_ix)).
 
+         socket_resources((from_id, out_ix), res_id)
+           :- socket_resources((to_id, in_ix), res_id),
+              inv_links((to_id, in_ix), (from_id, out_ix)).
+
         */
         let socket_resources = iteration
             .variable::<((NodeId, LocalSocketIx), ResourceId)>(
@@ -371,26 +505,37 @@ impl Graph {
                 &links,
                 |_from, &res_id, &to| (to, res_id),
             );
+
+            socket_resources.from_join(
+                &socket_resources,
+                &inv_links,
+                |&(to, in_ix), &res_id, &(from, out_ix)| {
+                    ((from, out_ix), res_id)
+                },
+            );
         }
 
         let socket_resources = socket_resources.complete();
 
         // update stored socket resources
         self.socket_resources = socket_resources.elements.into_iter().collect();
+        println!("socket_resources: {:?}", self.socket_resources);
 
-        let topo_order = self.build_topological_order();
+        let topo_order = self.build_topological_order()?;
 
         for node in topo_order {
             log::warn!("preparing node {:?}", node);
             self.prepare_node_meta(graph_scalar_in, node)?;
         }
 
-        /*
-
-        */
-
         // return true if all sockets point to owned resources
         // or cached transient resources
+
+        // for meta in self.resource_meta {
+        // match meta {
+        //
+        // }
+        // }
 
         Ok(true)
     }
@@ -405,6 +550,26 @@ impl Graph {
         // iterate through all resources, allocating all `None` resources
         // that have filled out `resource_meta`s -- afterward, all
         // owned resources should be ready for use
+
+        println!("{:#?}", self.socket_resources);
+
+        for (res_id, res_slot) in self.resources.iter_mut().enumerate() {
+            if res_slot.is_some() {
+                // TODO reallocate if necessary
+                continue;
+            }
+
+            // todo error handling here
+            let meta = self.resource_meta[res_id];
+
+            match meta.allocate(state) {
+                Ok(res) => *res_slot = Some(res),
+                Err(e) => {
+                    panic!("error allocating image for resource {res_id}");
+                }
+            }
+            *res_slot = Some(meta.allocate(state)?);
+        }
 
         // preprocess all nodes, handling bind groups, push constants,
         // workgroup counts, etc.
@@ -441,7 +606,7 @@ impl Graph {
         node.links.push((src_socket, (dst, dst_socket)));
     }
 
-    pub fn build_topological_order(&self) -> Vec<NodeId> {
+    pub fn build_topological_order(&self) -> Result<Vec<NodeId>> {
         let mut order = Vec::new();
 
         // find initial nodes, those without any incoming links
@@ -495,10 +660,11 @@ impl Graph {
             }
         }
 
-        // TODO should error if not empty
-        log::warn!("incoming_links.is_empty(): {}", incoming_links.is_empty());
+        if !incoming_links.is_empty() {
+            anyhow::bail!("Cycle detected");
+        }
 
-        order
+        Ok(order)
     }
 
     fn prepare_node_meta(
@@ -524,7 +690,27 @@ impl Graph {
                 meta = *def;
             }
 
-            // TODO apply schema rules to fill out meta
+            // TODO apply schema rules to fill out meta, here
+            {
+                let source_rules = schema
+                    .source_rules_sockets
+                    .iter()
+                    .filter(|(s, _)| *s == socket_ix);
+
+                for (_dst_socket, source) in source_rules {
+                    log::warn!("applying rule");
+                    let src_socket = source.other_socket_ix;
+                    log::warn!(
+                        "getting socket for node {}, socket {}",
+                        id.0,
+                        src_socket
+                    );
+                    let res_id =
+                        self.socket_resources.get(&(id, src_socket)).unwrap();
+                    let src_meta = &self.resource_meta[*res_id];
+                    meta.apply_socket_rule(src_meta, source.entry)?;
+                }
+            }
 
             // if there's an applicable constructor, give it the preliminary
             // ResourceMeta
@@ -653,53 +839,6 @@ impl Graph {
 
             self.schemas.push(schema);
         }
-
-        /*
-        {
-            let id = NodeSchemaId(self.schemas.len());
-
-            let schema = NodeSchema {
-                node_type: NodeType::Compute,
-                schema_id: id,
-
-                socket_names: vec![
-                    "image_in".into(),
-                    "image_out".into(),
-                    "buffer_in".into(),
-                    "buffer_out".into(),
-                ],
-
-                source_sockets: vec![
-                    (1, DataType::Texture),
-                    (3, DataType::Buffer),
-                ],
-
-                source_rules_sockets: vec![
-                    (
-                        1,
-                        SocketMetadataSource {
-                            other_socket_ix: 0,
-                            entry: ResourceMetadataEntry::TextureFormat,
-                        },
-                    ),
-                    (
-                        1,
-                        SocketMetadataSource {
-                            other_socket_ix: 0,
-                            entry: ResourceMetadataEntry::TextureSize,
-                        },
-                    ),
-                ],
-
-                source_rules_scalars: vec![],
-
-                default_sources: FxHashMap::default(),
-            };
-
-            self.schemas.push(schema);
-            id
-        };
-        */
 
         Ok(())
     }
