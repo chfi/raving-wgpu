@@ -1,4 +1,4 @@
-use std::sync::atomic::AtomicBool;
+use std::{collections::HashMap, sync::atomic::AtomicBool};
 
 use std::sync::Arc;
 
@@ -204,7 +204,7 @@ pub async fn run_compute() -> anyhow::Result<()> {
     Ok(())
 }
 
-pub async fn run() -> anyhow::Result<()> {
+pub async fn run_old() -> anyhow::Result<()> {
     let (event_loop, window, mut state) = raving_wgpu::initialize().await?;
 
     dbg!();
@@ -323,6 +323,49 @@ pub async fn run() -> anyhow::Result<()> {
     std::thread::sleep(std::time::Duration::from_millis(2000));
 
     dbg!();
+
+    Ok(())
+}
+
+pub async fn run() -> anyhow::Result<()> {
+    use raving_wgpu::graph::dfrog::{
+        Graph, InputResource, Node, NodeSchema, NodeSchemaId,
+    };
+
+    let (event_loop, window, mut state) = raving_wgpu::initialize().await?;
+
+    dbg!();
+    let size = window.inner_size();
+
+    let dims = [size.width, size.height];
+
+    let mut graph = Graph::new();
+
+    graph.add_schemas()?;
+
+    let img_s = NodeSchemaId(0);
+    let gfx_s = NodeSchemaId(1);
+    let comp_s = NodeSchemaId(2);
+
+    let transient_res: HashMap<String, InputResource<'_>> = HashMap::default();
+
+    let img_n = graph.add_node(img_s);
+    let gfx_n = graph.add_node(gfx_s);
+    let comp_n = graph.add_node(comp_s);
+
+    graph.add_link(img_n, 0, gfx_n, 0);
+    graph.add_link(gfx_n, 1, comp_n, 0);
+
+    let mut graph_scalars = rhai::Map::default();
+    graph_scalars.insert("dimensions".into(), rhai::Dynamic::from(dims));
+
+    let valid = graph.validate(&transient_res, &graph_scalars)?;
+
+    if valid {
+        println!("validation successful");
+    } else {
+        log::error!("graph validation error");
+    }
 
     Ok(())
 }

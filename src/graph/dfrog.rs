@@ -16,7 +16,7 @@ use super::NodeId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
-pub struct NodeSchemaId(usize);
+pub struct NodeSchemaId(pub usize);
 
 #[derive(Clone)]
 pub struct NodeSchema {
@@ -69,6 +69,43 @@ pub enum ResourceMetadataEntry {
 pub struct SocketMetadataSource {
     other_socket_ix: usize,
     entry: ResourceMetadataEntry,
+}
+
+impl SocketMetadataSource {
+    pub fn buffer_size(other_socket_ix: LocalSocketIx) -> Self {
+        SocketMetadataSource {
+            other_socket_ix,
+            entry: ResourceMetadataEntry::BufferSize,
+        }
+    }
+
+    pub fn buffer_usage(other_socket_ix: LocalSocketIx) -> Self {
+        SocketMetadataSource {
+            other_socket_ix,
+            entry: ResourceMetadataEntry::BufferUsage,
+        }
+    }
+
+    pub fn texture_size(other_socket_ix: LocalSocketIx) -> Self {
+        SocketMetadataSource {
+            other_socket_ix,
+            entry: ResourceMetadataEntry::TextureSize,
+        }
+    }
+
+    pub fn texture_format(other_socket_ix: LocalSocketIx) -> Self {
+        SocketMetadataSource {
+            other_socket_ix,
+            entry: ResourceMetadataEntry::TextureFormat,
+        }
+    }
+
+    pub fn texture_usage(other_socket_ix: LocalSocketIx) -> Self {
+        SocketMetadataSource {
+            other_socket_ix,
+            entry: ResourceMetadataEntry::TextureUsage,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -341,6 +378,13 @@ impl Graph {
         // update stored socket resources
         self.socket_resources = socket_resources.elements.into_iter().collect();
 
+        let topo_order = self.build_topological_order();
+
+        for node in topo_order {
+            log::warn!("preparing node {:?}", node);
+            self.prepare_node_meta(graph_scalar_in, node)?;
+        }
+
         /*
 
         */
@@ -475,8 +519,12 @@ impl Graph {
                 DataType::Texture => ResourceMeta::texture_default(),
             };
 
-            // TODO apply schema rules to fill out meta
+            if let Some(def) = schema.default_sources.get(&socket_ix) {
+                // TODO ensure that the types are correct i guess
+                meta = *def;
+            }
 
+            // TODO apply schema rules to fill out meta
 
             // if there's an applicable constructor, give it the preliminary
             // ResourceMeta
@@ -510,29 +558,24 @@ impl Graph {
                 },
             );
 
-            let create_image_meta =
-                move |scalars: &rhai::Map,
-                      meta: Option<ResourceMeta>|
-                      -> Result<ResourceMeta> {
-                    let dims = scalars.get("dimensions").unwrap();
-                    let size = dims.clone_cast::<[u32; 2]>();
+            let create_image_meta = move |scalars: &rhai::Map,
+                                          meta: Option<ResourceMeta>|
+                  -> Result<ResourceMeta> {
+                let dims = scalars.get("dimensions").unwrap();
+                let size = dims.clone_cast::<[u32; 2]>();
 
-                    match meta {
-                        Some(ResourceMeta::Texture {
-                            format, usage, ..
-                        }) => {
-                            //
-                            Ok(ResourceMeta::Texture {
-                                size: Some(size),
-                                format: Some(wgpu::TextureFormat::Rgba8Unorm),
-                                usage: Some(wgpu::TextureUsages::all()),
-                            })
-                        }
-                        _ => panic!("todo handle errors"),
+                match meta {
+                    Some(ResourceMeta::Texture { format, usage, .. }) => {
+                        //
+                        Ok(ResourceMeta::Texture {
+                            size: Some(size),
+                            format: Some(wgpu::TextureFormat::Rgba8Unorm),
+                            usage: Some(wgpu::TextureUsages::all()),
+                        })
                     }
-                };
-
-            let mut create_source_metadata = FxHashMap::default();
+                    _ => panic!("todo handle errors"),
+                }
+            };
 
             let mut schema = NodeSchema {
                 node_type: NodeType::Resource,
@@ -546,10 +589,12 @@ impl Graph {
 
                 default_sources,
 
-                create_source_metadata,
+                create_source_metadata: FxHashMap::default(),
             };
 
-            schema.create_source_metadata.insert(0, Arc::new(create_image_meta));
+            schema
+                .create_source_metadata
+                .insert(0, Arc::new(create_image_meta));
 
             self.schemas.push(schema);
             id
@@ -565,7 +610,6 @@ impl Graph {
                 socket_names: vec!["image_in".into(), "image_out".into()],
 
                 source_sockets: vec![],
-
                 source_rules_sockets: vec![],
                 source_rules_scalars: vec![],
 
@@ -575,8 +619,40 @@ impl Graph {
             };
 
             self.schemas.push(schema);
-            id
         };
+
+        {
+            let id = NodeSchemaId(self.schemas.len());
+
+            let default_source = ResourceMeta::Texture {
+                size: None,
+                format: None,
+                usage: Some(wgpu::TextureUsages::all()),
+            };
+            let mut default_sources = FxHashMap::default();
+
+            default_sources.insert(1, default_source);
+
+            let schema = NodeSchema {
+                node_type: NodeType::Compute,
+                schema_id: id,
+
+                socket_names: vec!["image_in".into(), "image_out".into()],
+
+                source_sockets: vec![(1, DataType::Texture)],
+                source_rules_sockets: vec![
+                    (1, SocketMetadataSource::texture_size(0)),
+                    (1, SocketMetadataSource::texture_format(0)),
+                ],
+                source_rules_scalars: vec![],
+
+                default_sources,
+
+                create_source_metadata: FxHashMap::default(),
+            };
+
+            self.schemas.push(schema);
+        }
 
         /*
         {
