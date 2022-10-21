@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use datafrog::{Iteration, Relation, RelationLeaper, Variable};
 use rustc_hash::FxHashMap;
@@ -297,43 +297,48 @@ impl Graph {
             self.nodes.iter().enumerate().flat_map(|(ix, node)| {
                 let node_id = NodeId::from(ix);
                 node.links.iter().map(move |(out_ix, (to_node, in_ix))| {
-                    ((node_id, out_ix), (to_node, in_ix))
+                    ((node_id, *out_ix), (*to_node, *in_ix))
                 })
             }),
         );
 
         let inv_links = Relation::from_map(&links, |&(from, to)| (to, from));
 
-        /*
-         goal: match each socket up with a `resource_origin`
-
-         socket_resources((node_id, socket_ix), res_id)
-           :-
-
-         socket_origins((node_id, socket_ix), res_id)
-
-        */
-
-        /*
-        let socket_origins = Relation::from_iter(
-            self.nodes.iter().enumerate().flat_map(|(ix, node)| {
-                let node_id = NodeId::from(ix);
-
-                let schema = &self.schemas[node.schema.0];
-                schema.source_sockets.iter().map(|(socket, _ty)| {
-
-                });
-
-            })
-        );
-        */
+        // socket_origins((node_id, socket_ix), res_id).
+        let socket_origins = Relation::from_iter(socket_origins);
 
         let mut iteration = datafrog::Iteration::new();
 
+        /*
+         goal: match each socket up with a resource ID from an origin
+
+         socket_resources((node, socket), res_id)
+           : socket_origins((node, socket), res_id).
+
+         socket_resources((to_id, in_ix), res_id)
+           :- socket_resources((from_id, out_ix), res_id),
+              links((from_id, out_ix), (to_id, in_ix)).
+
+        */
         let socket_resources = iteration
             .variable::<((NodeId, LocalSocketIx), ResourceId)>(
                 "socket_resources",
             );
+
+        socket_resources.extend(socket_origins.iter().copied());
+
+        while iteration.changed() {
+            socket_resources.from_join(
+                &socket_resources,
+                &links,
+                |_from, &res_id, &to| (to, res_id),
+            );
+        }
+
+        let socket_resources = socket_resources.complete();
+
+        // update stored socket resources
+        self.socket_resources = socket_resources.elements.into_iter().collect();
 
         /*
          this is where NodeScheme's create_source_metadata comes in;
@@ -341,6 +346,27 @@ impl Graph {
          for each resource, call the corresponding function on the schema,
          to update the entries in self.resource_meta
         */
+        // assert!(self.resource_meta.len() == self.resources.len());
+
+        for &((node_id, socket), res_id) in socket_origins.iter() {
+            if let Some(create_source) =
+                self.nodes.get(node_id.0).and_then(|n| {
+                    let schema = self.schemas.get(n.schema.0)?;
+                    schema.create_source_metadata.as_ref()
+                })
+            {
+                let mut meta = self.resource_meta[res_id];
+
+                // use socket rules to figure out metadata if applicable
+                // including transient cache
+
+                let new_meta = create_source(graph_scalar_in, Some(meta))?;
+            }
+
+            // for (ix, meta) in self.resource_meta.iter_mut().enumerate() {
+
+            // }
+        }
 
         /*
 
@@ -396,6 +422,67 @@ impl Graph {
     ) {
         let node = &mut self.nodes[src.0];
         node.links.push((src_socket, (dst, dst_socket)));
+    }
+
+    pub fn build_topological_order(&self) -> Vec<NodeId> {
+        let mut order = Vec::new();
+
+        // find initial nodes, those without any incoming links
+
+        let mut incoming_links: FxHashMap<NodeId, BTreeSet<NodeId>> =
+            FxHashMap::default();
+
+        for (ix, node) in self.nodes.iter().enumerate() {
+            let from_id = NodeId::from(ix);
+
+            for &(out_ix, (to_id, in_ix)) in node.links.iter() {
+                incoming_links.entry(to_id).or_default().insert(from_id);
+            }
+        }
+
+        let mut start_nodes = self
+            .nodes
+            .iter()
+            .enumerate()
+            .filter_map(|(ix, node)| {
+                let id = NodeId::from(ix);
+                (!incoming_links.contains_key(&id)).then_some(id)
+            })
+            .collect::<Vec<_>>();
+
+        while let Some(n) = start_nodes.pop() {
+            order.push(n);
+
+            let node = &self.nodes[n.0];
+
+            /*
+            for each node m with an edge e from n to m do
+              remove edge e from the graph
+              if m has no other incoming edges then
+                insert m into S
+            */
+
+            for (out_ix, (to_id, in_ix)) in node.links.iter() {
+
+                let mut remove_set = false;
+                if let Some(incoming) = incoming_links.get_mut(&to_id) {
+                    incoming.remove(&n);
+                    if incoming.is_empty() {
+                        remove_set = true;
+                        start_nodes.push(*to_id);
+                    }
+                }
+
+                if remove_set {
+                    incoming_links.remove(&to_id);
+                }
+            }
+        }
+
+        // TODO should error if not empty
+        log::warn!("incoming_links.is_empty(): {}", incoming_links.is_empty());
+
+        order
     }
 
     /*
