@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use datafrog::{Iteration, Relation, RelationLeaper, Variable};
 use rustc_hash::FxHashMap;
@@ -151,7 +151,7 @@ pub struct Graph {
     // nodes: Vec<NodeId>,
     node_names: FxHashMap<NodeId, rhai::ImmutableString>,
 
-    socket_resources: FxHashMap<(NodeId, LocalSocketIx), ResourceId>,
+    socket_resources: BTreeMap<(NodeId, LocalSocketIx), ResourceId>,
 
     // node_names: Vec<rhai::ImmutableString>,
     resource_meta: Vec<ResourceMeta>,
@@ -186,7 +186,7 @@ impl Graph {
             resource_meta: Vec::new(),
             resources: Vec::new(),
 
-            socket_resources: FxHashMap::default(),
+            socket_resources: BTreeMap::default(),
             transients_meta_cache: HashMap::default(),
         }
     }
@@ -250,13 +250,16 @@ impl Graph {
             }
         }
 
+        let mut socket_origins = Vec::new();
+
         for (ix, node) in self.nodes.iter().enumerate() {
             let node_id = NodeId::from(ix);
             let schema = &self.schemas[node.schema.0];
 
             for &(socket_ix, ty) in schema.source_sockets.iter() {
                 let socket_key = (node_id, socket_ix);
-                if self.socket_resources.contains_key(&socket_key) {
+                if let Some(res_id) = self.socket_resources.get(&socket_key) {
+                    socket_origins.push(((node_id, socket_ix), *res_id));
                     continue;
                 }
 
@@ -270,6 +273,7 @@ impl Graph {
                 self.resources.push(None);
 
                 self.socket_resources.insert(socket_key, res_id);
+                socket_origins.push(((node_id, socket_ix), res_id));
             }
         }
 
@@ -283,27 +287,67 @@ impl Graph {
                 .map(|(ix, node)| (NodeId::from(ix), node.schema)),
         );
 
-        // resource ID for each socket
+        // resource ID for each socket; empty if uninitialized
         // socket_resource(socket_ix, res_id)
-        let socket_resources = Relation::from_iter(
+        let existing_socket_resources = Relation::from_iter(
             self.socket_resources.iter().map(|(&k, &v)| (k, v)),
         );
 
+        let links = Relation::from_iter(
+            self.nodes.iter().enumerate().flat_map(|(ix, node)| {
+                let node_id = NodeId::from(ix);
+                node.links.iter().map(move |(out_ix, (to_node, in_ix))| {
+                    ((node_id, out_ix), (to_node, in_ix))
+                })
+            }),
+        );
+
+        let inv_links = Relation::from_map(&links, |&(from, to)| (to, from));
 
         /*
-          goal: match each socket up with a `resource_origin`
-         */
+         goal: match each socket up with a `resource_origin`
 
+         socket_resources((node_id, socket_ix), res_id)
+           :-
 
+         socket_origins((node_id, socket_ix), res_id)
 
+        */
 
         /*
-          with all sockets known to point to valide resource IDs, we can now
-          attempt to allocate the corresponding resources
+        let socket_origins = Relation::from_iter(
+            self.nodes.iter().enumerate().flat_map(|(ix, node)| {
+                let node_id = NodeId::from(ix);
 
-          (this is where NodeScheme's create_source_metadata comes in)
-         */
+                let schema = &self.schemas[node.schema.0];
+                schema.source_sockets.iter().map(|(socket, _ty)| {
 
+                });
+
+            })
+        );
+        */
+
+        let mut iteration = datafrog::Iteration::new();
+
+        let socket_resources = iteration
+            .variable::<((NodeId, LocalSocketIx), ResourceId)>(
+                "socket_resources",
+            );
+
+        /*
+         this is where NodeScheme's create_source_metadata comes in;
+
+         for each resource, call the corresponding function on the schema,
+         to update the entries in self.resource_meta
+        */
+
+        /*
+
+        */
+
+        // return true if all sockets point to owned resources
+        // or cached transient resources
 
         Ok(true)
     }
@@ -315,6 +359,18 @@ impl Graph {
         graph_scalar_in: &'a rhai::Map,
         // node_scalar_in: FxHashMap<NodeId, rhai::Map>,
     ) -> Result<SubmissionIndex> {
+        // iterate through all resources, allocating all `None` resources
+        // that have filled out `resource_meta`s -- afterward, all
+        // owned resources should be ready for use
+
+        // preprocess all nodes, handling bind groups, push constants,
+        // workgroup counts, etc.
+
+        // walk the graph in execution order, recording the node commands
+        // in order to a command encoder
+
+        // submit the commands to the GPU queue and return the submission index
+
         todo!();
     }
 
