@@ -31,7 +31,8 @@ pub struct NodeSchema {
     // source_rules_scalars: Vec<(LocalSocketIx, Vec<rhai::ImmutableString>)>,
     default_sources: FxHashMap<LocalSocketIx, ResourceMeta>,
 
-    create_source_metadata: Option<
+    create_source_metadata: FxHashMap<
+        LocalSocketIx,
         Arc<dyn Fn(&rhai::Map, Option<ResourceMeta>) -> Result<ResourceMeta>>,
     >,
 }
@@ -341,34 +342,6 @@ impl Graph {
         self.socket_resources = socket_resources.elements.into_iter().collect();
 
         /*
-         this is where NodeScheme's create_source_metadata comes in;
-
-         for each resource, call the corresponding function on the schema,
-         to update the entries in self.resource_meta
-        */
-        // assert!(self.resource_meta.len() == self.resources.len());
-
-        for &((node_id, socket), res_id) in socket_origins.iter() {
-            if let Some(create_source) =
-                self.nodes.get(node_id.0).and_then(|n| {
-                    let schema = self.schemas.get(n.schema.0)?;
-                    schema.create_source_metadata.as_ref()
-                })
-            {
-                let mut meta = self.resource_meta[res_id];
-
-                // use socket rules to figure out metadata if applicable
-                // including transient cache
-
-                let new_meta = create_source(graph_scalar_in, Some(meta))?;
-            }
-
-            // for (ix, meta) in self.resource_meta.iter_mut().enumerate() {
-
-            // }
-        }
-
-        /*
 
         */
 
@@ -463,7 +436,6 @@ impl Graph {
             */
 
             for (out_ix, (to_id, in_ix)) in node.links.iter() {
-
                 let mut remove_set = false;
                 if let Some(incoming) = incoming_links.get_mut(&to_id) {
                     incoming.remove(&n);
@@ -485,20 +457,39 @@ impl Graph {
         order
     }
 
-    /*
-    pub fn resolve_sockets(&mut self) {
+    fn prepare_node_meta(
+        &mut self,
+        graph_scalar_in: &rhai::Map,
+        id: NodeId,
+    ) -> Result<()> {
+        // iterate through socket_resources that match this node ID
+        let node = &self.nodes[id.0];
+        let schema = &self.schemas[node.schema.0];
 
-        // let all_source_sockets = Relation::from_leapjoin(source, leapers, logic)
+        for &(socket_ix, ty) in schema.source_sockets.iter() {
+            let key = (id, socket_ix);
+            let res_id = self.socket_resources[&key];
 
-        let all_sockets = {
-            /*
+            let mut meta = match ty {
+                DataType::Buffer => ResourceMeta::buffer_default(),
+                DataType::Texture => ResourceMeta::texture_default(),
+            };
 
-            */
-        };
+            // TODO apply schema rules to fill out meta
 
-        // let to_resolve = Relation::from_antijoin(input1, input2, logic)
+
+            // if there's an applicable constructor, give it the preliminary
+            // ResourceMeta
+            if let Some(create) = schema.create_source_metadata.get(&socket_ix)
+            {
+                meta = create(graph_scalar_in, Some(meta))?;
+            }
+
+            self.resource_meta[res_id] = meta;
+        }
+
+        Ok(())
     }
-    */
 
     pub fn add_schemas(&mut self) -> Result<()> {
         {
@@ -519,13 +510,31 @@ impl Graph {
                 },
             );
 
-            let create_source_metadata = |scalars: &rhai::Map,
-                                          meta: Option<ResourceMeta>|
-             -> Result<ResourceMeta> {
-                todo!();
-            };
+            let create_image_meta =
+                move |scalars: &rhai::Map,
+                      meta: Option<ResourceMeta>|
+                      -> Result<ResourceMeta> {
+                    let dims = scalars.get("dimensions").unwrap();
+                    let size = dims.clone_cast::<[u32; 2]>();
 
-            let schema = NodeSchema {
+                    match meta {
+                        Some(ResourceMeta::Texture {
+                            format, usage, ..
+                        }) => {
+                            //
+                            Ok(ResourceMeta::Texture {
+                                size: Some(size),
+                                format: Some(wgpu::TextureFormat::Rgba8Unorm),
+                                usage: Some(wgpu::TextureUsages::all()),
+                            })
+                        }
+                        _ => panic!("todo handle errors"),
+                    }
+                };
+
+            let mut create_source_metadata = FxHashMap::default();
+
+            let mut schema = NodeSchema {
                 node_type: NodeType::Resource,
                 schema_id: id,
 
@@ -537,7 +546,32 @@ impl Graph {
 
                 default_sources,
 
-                create_source_metadata: Some(Arc::new(create_source_metadata)),
+                create_source_metadata,
+            };
+
+            schema.create_source_metadata.insert(0, Arc::new(create_image_meta));
+
+            self.schemas.push(schema);
+            id
+        };
+
+        {
+            let id = NodeSchemaId(self.schemas.len());
+
+            let schema = NodeSchema {
+                node_type: NodeType::Graphics,
+                schema_id: id,
+
+                socket_names: vec!["image_in".into(), "image_out".into()],
+
+                source_sockets: vec![],
+
+                source_rules_sockets: vec![],
+                source_rules_scalars: vec![],
+
+                default_sources: FxHashMap::default(),
+
+                create_source_metadata: FxHashMap::default(),
             };
 
             self.schemas.push(schema);
