@@ -323,7 +323,11 @@ pub struct Graph {
     resource_meta: Vec<ResourceMeta>,
     resources: Vec<Option<Resource>>,
 
-    transients_meta_cache: HashMap<String, ResourceMeta>,
+    transient_cache_id: HashMap<rhai::ImmutableString, TransientId>,
+    transient_cache: BTreeMap<TransientId, ResourceMeta>,
+    transient_links: Vec<(TransientId, (NodeId, LocalSocketIx))>,
+    // transient_resource_links: HashMap<String, Vec<(NodeId, LocalSocketIx)>>,
+    // transients_meta_cache: HashMap<String, ResourceMeta>,
 }
 
 pub enum InputResource<'a> {
@@ -342,6 +346,40 @@ pub enum InputResource<'a> {
     },
 }
 
+impl<'a> InputResource<'a> {
+    pub fn metadata(&self) -> ResourceMeta {
+        match self {
+            InputResource::Texture {
+                size,
+                format,
+                texture,
+                view,
+            } => ResourceMeta::Texture {
+                size: Some(*size),
+                format: Some(*format),
+                usage: None,
+            },
+            InputResource::Buffer {
+                size,
+                stride,
+                buffer,
+            } => ResourceMeta::Buffer {
+                size: Some(*size),
+                usage: None,
+                stride: *stride,
+            },
+        }
+    }
+
+    pub fn is_buffer(&self) -> bool {
+        matches!(self, Self::Buffer { .. })
+    }
+
+    pub fn is_texture(&self) -> bool {
+        matches!(self, Self::Texture { .. })
+    }
+}
+
 impl Graph {
     pub fn new() -> Self {
         Self {
@@ -353,7 +391,11 @@ impl Graph {
             resources: Vec::new(),
 
             socket_resources: BTreeMap::default(),
-            transients_meta_cache: HashMap::default(),
+
+            transient_cache_id: HashMap::default(),
+            transient_cache: BTreeMap::default(),
+            transient_links: Vec::new(),
+            // transients_meta_cache: HashMap::default(),
         }
     }
 
@@ -383,35 +425,19 @@ impl Graph {
         let mut invalidated_transients = Vec::new();
 
         for (key, in_res) in transient_res.iter() {
-            let meta = match in_res {
-                InputResource::Texture {
-                    size,
-                    format,
-                    texture,
-                    view,
-                } => ResourceMeta::Texture {
-                    size: Some(*size),
-                    format: Some(*format),
-                    usage: None,
-                },
-                InputResource::Buffer {
-                    size,
-                    stride,
-                    buffer,
-                } => ResourceMeta::Buffer {
-                    size: Some(*size),
-                    usage: None,
-                    stride: *stride,
-                },
-            };
+            if let Some(id) = self.transient_cache_id.get(key.as_str()).copied() {
+                let meta = in_res.metadata();
 
-            if let Some(cache) = self.transients_meta_cache.get_mut(key) {
-                if cache != &meta {
-                    *cache = meta;
+                let cache = self.transient_cache.get(&id).copied();
+
+                if cache != Some(meta) {
+                    self.transient_cache.insert(id, meta);
                     invalidated_transients.push(key);
                 }
             } else {
-                self.transients_meta_cache.insert(key.to_string(), meta);
+                let id = self.transient_cache.len();
+                let meta = in_res.metadata();
+                self.transient_cache.insert(id, in_res.metadata());
                 invalidated_transients.push(key);
             }
         }

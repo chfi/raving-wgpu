@@ -74,6 +74,8 @@ pub struct State {
     pub queue: wgpu::Queue,
     pub(crate) config: wgpu::SurfaceConfiguration,
     pub(crate) size: winit::dpi::PhysicalSize<u32>,
+
+    pub surface_format: wgpu::TextureFormat,
 }
 
 impl State {
@@ -114,10 +116,12 @@ impl State {
             )
             .await?;
 
+        let surface_format = surface.get_supported_formats(&adapter)[0];
+
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT
             | wgpu::TextureUsages::COPY_DST,
-            format: surface.get_supported_formats(&adapter)[0],
+            format: surface_format,
             width: size.width,
             height: size.height,
             present_mode: wgpu::PresentMode::Fifo,
@@ -132,6 +136,7 @@ impl State {
             queue,
             config,
             size,
+            surface_format,
         })
     }
 

@@ -339,6 +339,11 @@ pub async fn run() -> anyhow::Result<()> {
 
     let dims = [size.width, size.height];
 
+    let output = state.surface.get_current_texture()?;
+    let output_view = output
+        .texture
+        .create_view(&wgpu::TextureViewDescriptor::default());
+
     let mut graph = Graph::new();
 
     graph.add_schemas()?;
@@ -347,7 +352,21 @@ pub async fn run() -> anyhow::Result<()> {
     let gfx_s = NodeSchemaId(1);
     let comp_s = NodeSchemaId(2);
 
-    let transient_res: HashMap<String, InputResource<'_>> = HashMap::default();
+    let mut transient_res: HashMap<String, InputResource<'_>> = HashMap::default();
+    {
+        let size = dims;
+        let format = state.surface_format;
+
+        transient_res.insert(
+            "swapchain".into(),
+            InputResource::Texture {
+                size,
+                format,
+                texture: None,
+                view: Some(&output_view),
+            },
+        );
+    }
 
     let img_n1 = graph.add_node(img_s);
     let img_n2 = graph.add_node(img_s);
@@ -372,6 +391,9 @@ pub async fn run() -> anyhow::Result<()> {
     }
 
     let sub_index = graph.execute(&state, &transient_res, &graph_scalars)?;
+
+    // output.present();
+    // std::thread::sleep(std::time::Duration::from_millis(2000));
 
     Ok(())
 }
