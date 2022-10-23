@@ -13,6 +13,9 @@ log = "0.4"
 wgpu = { version = "0.14", features = ["spirv"] }
 naga = { version = "0.10", features = ["clone", "spv-in", "glsl-in", "spv-out"] }
 
+crossbeam = "0.8"
+parking_lot = "0.11.1"
+
 bytemuck = { version = "1.4", features = [ "derive" ] }
 datafrog = "2.0.1"
 

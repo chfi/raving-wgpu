@@ -25,6 +25,7 @@ pub struct GraphicsPipeline {
 
 impl GraphicsPipeline {
     // NB: only supports disjoint ranges for vertex and fragment for now
+    /*
     pub fn push_constant_ranges(&self) -> Vec<wgpu::PushConstantRange> {
         let vx = self.vertex.push_constants.as_ref();
         let fg = self.fragment.push_constants.as_ref();
@@ -36,6 +37,7 @@ impl GraphicsPipeline {
             .filter_map(|(stage, pc)| Some(pc?.to_range(stage)))
             .collect()
     }
+    */
 
     pub fn new(
         state: &crate::State,
@@ -70,8 +72,8 @@ impl GraphicsPipeline {
 
         let pipeline_layout = {
             let stages = [
-                (&vertex.push_constants, wgpu::ShaderStages::VERTEX),
-                (&fragment.push_constants, wgpu::ShaderStages::FRAGMENT),
+                (&vertex.shader.push_constants, wgpu::ShaderStages::VERTEX),
+                (&fragment.shader.push_constants, wgpu::ShaderStages::FRAGMENT),
             ];
 
             let ranges = stages
@@ -142,8 +144,8 @@ impl GraphicsPipeline {
 
 #[derive(Debug)]
 pub struct VertexShaderInstance {
-    shader: Arc<VertexShader>,
-    pub push_constants: Option<PushConstants>,
+    pub(crate) shader: Arc<VertexShader>,
+    // pub push_constants: Option<PushConstants>,
 
     pub vertex_step_modes: Vec<wgpu::VertexStepMode>,
     pub vertex_buffer_strides: Vec<u64>,
@@ -203,7 +205,7 @@ impl VertexShaderInstance {
 
         VertexShaderInstance {
             shader,
-            push_constants,
+            // push_constants,
             vertex_step_modes,
             vertex_buffer_strides,
             vertex_buffer_layouts,
@@ -218,7 +220,7 @@ pub struct FragmentShaderInstance {
     attachment_formats: Vec<wgpu::TextureFormat>,
     depth_format: Option<wgpu::TextureFormat>,
 
-    pub push_constants: Option<interface::PushConstants>,
+    // pub push_constants: Option<interface::PushConstants>,
 }
 
 impl FragmentShaderInstance {
@@ -255,7 +257,7 @@ impl FragmentShaderInstance {
             attachment_formats: attchs,
             depth_format: None,
 
-            push_constants: shader.push_constants.clone(),
+            // push_constants: shader.push_constants.clone(),
         };
 
         Ok(result)

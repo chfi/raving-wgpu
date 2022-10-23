@@ -1,4 +1,7 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::{
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    path::PathBuf,
+};
 
 use datafrog::{Iteration, Relation, RelationLeaper, Variable};
 use rustc_hash::FxHashMap;
@@ -7,7 +10,15 @@ use wgpu::{SubmissionIndex, TextureUsages};
 use std::sync::Arc;
 
 use crate::{
-    texture::Texture, ComputeShaderOp, DataType, GraphicsPipelineOp, State,
+    shader::{
+        render::{
+            FragmentShader, FragmentShaderInstance, GraphicsPipeline,
+            VertexShader, VertexShaderInstance,
+        },
+        ComputeShader,
+    },
+    texture::Texture,
+    DataType, State,
 };
 
 use anyhow::Result;
@@ -124,6 +135,14 @@ type LocalSocketIx = usize;
 
 type ResourceId = usize;
 type TransientId = usize;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+enum ResourceRef {
+    Owned(ResourceId),
+    Transient(TransientId),
+}
+
+
 
 pub enum SocketState {
     Uninitialized,
@@ -941,7 +960,127 @@ impl Graph {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum NodeOpId {
+    NoOp,
+    Graphics(usize),
+    Compute(usize),
+}
+
 pub struct GraphOps {
-    graphics: Vec<GraphicsPipelineOp>,
-    compute: Vec<ComputeShaderOp>,
+    // vertex_shaders: HashMap<PathBuf, VertexShader>,
+    // fragment_shaders: HashMap<PathBuf, FragmentShader>,
+    // compute_shaders: HashMap<
+    graphics: Vec<GraphicsPipeline>,
+    compute: Vec<ComputeShader>,
+}
+
+impl GraphOps {
+    pub fn create_graphics_schema(
+        &mut self,
+        state: &State,
+        vert_src: &[u8],
+        frag_src: &[u8],
+        frag_out_formats: &[wgpu::TextureFormat],
+        schema_id: NodeSchemaId,
+    ) -> Result<(NodeSchema, NodeOpId)> {
+        let vert = VertexShader::from_spirv(&state, vert_src, "main")?;
+        let frag = FragmentShader::from_spirv(&state, frag_src, "main")?;
+
+        let vert = Arc::new(vert);
+        let frag = Arc::new(frag);
+
+        let vert_inst = VertexShaderInstance::from_shader_single_buffer(
+            &vert,
+            wgpu::VertexStepMode::Vertex,
+        );
+
+        let frag_inst =
+            FragmentShaderInstance::from_shader(&frag, frag_out_formats)?;
+
+        let graphics = GraphicsPipeline::new(&state, vert_inst, frag_inst)?;
+
+        let op_id = NodeOpId::Graphics(self.graphics.len());
+
+        // build sockets
+        // there's one socket per vertex buffer,
+        // one per fragment attachment,
+        // and one per binding resource... maybe?
+
+        // there should be *some* additional logic, like you shouldn't have
+        // to manually provide samplers in sockets, but i'm not sure how to
+        // add that right now -- it requires making some additional assumptions
+        // about the shader code
+
+        // for now i think i'll just add some relatively simple way to
+        // "redirect sockets" as well
+
+        // all it'd have to do is -- and this is something that happens when
+        // creating bind groups -- reuse the same resource for multiple
+        // bindings
+        // this can be accomplished by unifying the relevant variable names
+        // in a given shader
+
+        // but, honestly, it wouldn't be that big a deal to just add all
+        // sockets for now, and add a handful more links to handle samplers
+        //   -- that's the way to go
+
+        let mut socket_names = Vec::new();
+
+        // add vertex shader sockets
+        //   vertex buffers
+        // hardcoded to a single vertex buffer
+        socket_names.push("vertex_in".into());
+
+        //   bind groups
+        for group in vert.group_bindings.iter() {
+            for binding in group.bindings.iter() {
+                socket_names.push(binding.global_var_name.clone());
+            }
+        }
+
+        // add fragment shader sockets
+        //   render attachments
+        for output in frag.fragment_outputs.iter() {
+            socket_names.push(output.name.as_str().into());
+        }
+        
+        //   bind groups
+        for group in frag.group_bindings.iter() {
+            for binding in group.bindings.iter() {
+                socket_names.push(binding.global_var_name.clone());
+            }
+        }
+
+        let schema = NodeSchema {
+            node_type: NodeType::Graphics,
+            schema_id,
+
+            socket_names,
+            source_sockets: vec![],
+
+            source_rules_sockets: vec![],
+            source_rules_scalars: vec![],
+
+            default_sources: HashMap::default(),
+            create_source_metadata: HashMap::default(),
+        };
+
+        self.graphics.push(graphics);
+
+        Ok((schema, op_id))
+    }
+}
+
+
+struct SocketAnnotations {
+    name_id_cache: HashMap<String, usize>,
+    annotations: BTreeMap<(NodeId, LocalSocketIx), (usize, rhai::Map)>,
+}
+
+pub struct NodeOpState {
+    bind_groups: Vec<wgpu::BindGroup>,
+
+    node_parameters: rhai::Map,
+
 }
