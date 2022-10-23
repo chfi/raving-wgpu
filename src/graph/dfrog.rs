@@ -29,6 +29,47 @@ use super::NodeId;
 #[repr(transparent)]
 pub struct NodeSchemaId(pub usize);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum SocketBinding {
+    VertexBuffer {
+        slot: u32,
+    },
+    FragmentAttachment {
+        location: u32,
+    },
+    BindGroup {
+        stage: naga::ShaderStage,
+        group: u32,
+        binding: u32,
+    },
+}
+
+impl SocketBinding {
+    fn compute_bind_group(group: u32, binding: u32) -> Self {
+        Self::BindGroup {
+            stage: naga::ShaderStage::Compute,
+            group,
+            binding,
+        }
+    }
+
+    fn vertex_bind_group(group: u32, binding: u32) -> Self {
+        Self::BindGroup {
+            stage: naga::ShaderStage::Vertex,
+            group,
+            binding,
+        }
+    }
+
+    fn fragment_bind_group(group: u32, binding: u32) -> Self {
+        Self::BindGroup {
+            stage: naga::ShaderStage::Fragment,
+            group,
+            binding,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct NodeSchema {
     node_type: NodeType,
@@ -42,6 +83,8 @@ pub struct NodeSchema {
     // source_rules_scalars: Vec<(LocalSocketIx, Vec<rhai::ImmutableString>)>,
     default_sources: FxHashMap<LocalSocketIx, ResourceMeta>,
 
+    socket_bindings: Vec<(LocalSocketIx, SocketBinding)>,
+    // binding_socket: Vec<((wgpu::ShaderStages, (u32, u32)), LocalSocketIx)>,
     create_source_metadata: FxHashMap<
         LocalSocketIx,
         Arc<dyn Fn(&rhai::Map, Option<ResourceMeta>) -> Result<ResourceMeta>>,
@@ -141,8 +184,6 @@ enum ResourceRef {
     Owned(ResourceId),
     Transient(TransientId),
 }
-
-
 
 pub enum SocketState {
     Uninitialized,
@@ -336,6 +377,7 @@ pub struct Graph {
     // nodes: Vec<NodeId>,
     node_names: FxHashMap<NodeId, rhai::ImmutableString>,
 
+    // these are populated by the links, resource origins, and transients
     socket_resources: BTreeMap<(NodeId, LocalSocketIx), ResourceId>,
     socket_transients: BTreeMap<(NodeId, LocalSocketIx), TransientId>,
 
@@ -346,8 +388,8 @@ pub struct Graph {
     transient_cache_id: HashMap<rhai::ImmutableString, TransientId>,
     transient_cache: BTreeMap<TransientId, ResourceMeta>,
 
-    // transient_links: BTreeMap<TransientId, Vec<(NodeId, LocalSocketIx)>>,
     transient_links: BTreeMap<(NodeId, LocalSocketIx), TransientId>,
+    // transient_links: BTreeMap<TransientId, Vec<(NodeId, LocalSocketIx)>>,
     // transient_links: Vec<(TransientId, (NodeId, LocalSocketIx))>,
     // transient_resource_links: HashMap<String, Vec<(NodeId, LocalSocketIx)>>,
     // transients_meta_cache: HashMap<String, ResourceMeta>,
@@ -407,6 +449,7 @@ impl Graph {
     pub fn new() -> Self {
         Self {
             schemas: Vec::new(),
+
             nodes: Vec::new(),
             node_names: FxHashMap::default(),
 
@@ -647,8 +690,26 @@ impl Graph {
         // preprocess all nodes, handling bind groups, push constants,
         // workgroup counts, etc.
 
+        // this maps each socket, ordered by node, to a pointer to
+        // a binding that can be used for resources etc.
+        let socket_res_refs = {
+            let mut refs = BTreeMap::default();
+            for (key, res) in self.socket_resources.iter() {
+                refs.insert(*key, ResourceRef::Owned(*res));
+            }
+
+            for (key, res) in self.socket_transients.iter() {
+                refs.insert(*key, ResourceRef::Transient(*res));
+            }
+            refs
+        };
+        
+        let transient_res_ids = self.map_transient_resource_ids(transient_res);
+
         // walk the graph in execution order, recording the node commands
         // in order to a command encoder
+        let topo_order = self.build_topological_order()?;
+        
 
         // submit the commands to the GPU queue and return the submission index
 
@@ -755,6 +816,21 @@ impl Graph {
         }
 
         Ok(order)
+    }
+
+    // assumes that the transient cache has already been updated
+    // for the provided map
+    fn map_transient_resource_ids<'a>(&self, 
+        transient_res: &'a HashMap<String, InputResource<'a>>,
+    ) -> HashMap<TransientId, &'a InputResource<'a>> {
+        let mut output = HashMap::default();
+
+        for (name, res) in transient_res.iter() {
+            let id = self.transient_cache_id.get(name.as_str()).unwrap();
+            output.insert(*id, res);
+        }
+
+        output
     }
 
     fn prepare_node_meta(
@@ -886,6 +962,8 @@ impl Graph {
                 source_rules_sockets: vec![],
                 source_rules_scalars: vec![(0, "dimensions".into())],
 
+                socket_bindings: vec![],
+
                 default_sources,
 
                 create_source_metadata: FxHashMap::default(),
@@ -912,6 +990,8 @@ impl Graph {
                 source_rules_sockets: vec![],
                 source_rules_scalars: vec![],
 
+                socket_bindings: vec![],
+
                 default_sources: FxHashMap::default(),
 
                 create_source_metadata: FxHashMap::default(),
@@ -935,6 +1015,11 @@ impl Graph {
 
             default_sources.insert(1, default_source);
 
+            let socket_bindings = vec![
+                (0, SocketBinding::compute_bind_group(0, 0)),
+                (1, SocketBinding::compute_bind_group(0, 1)),
+            ];
+
             let schema = NodeSchema {
                 node_type: NodeType::Compute,
                 schema_id: id,
@@ -947,6 +1032,8 @@ impl Graph {
                     (1, SocketMetadataSource::texture_format(0)),
                 ],
                 source_rules_scalars: vec![],
+
+                socket_bindings,
 
                 default_sources,
 
@@ -973,6 +1060,9 @@ pub struct GraphOps {
     // compute_shaders: HashMap<
     graphics: Vec<GraphicsPipeline>,
     compute: Vec<ComputeShader>,
+
+    node_op_state: FxHashMap<NodeId, NodeOpState>,
+    schema_ops: FxHashMap<NodeSchemaId, NodeOpId>,
 }
 
 impl GraphOps {
@@ -1026,15 +1116,28 @@ impl GraphOps {
         //   -- that's the way to go
 
         let mut socket_names = Vec::new();
+        let mut socket_bindings = Vec::new();
 
         // add vertex shader sockets
         //   vertex buffers
         // hardcoded to a single vertex buffer
+        socket_bindings.push((
+            socket_names.len(),
+            SocketBinding::VertexBuffer { slot: 0 }
+        ));
         socket_names.push("vertex_in".into());
 
         //   bind groups
         for group in vert.group_bindings.iter() {
             for binding in group.bindings.iter() {
+                let ix = socket_names.len();
+                socket_bindings.push((
+                    ix,
+                    SocketBinding::vertex_bind_group(
+                        group.group_ix,
+                        binding.binding.binding,
+                    ),
+                ));
                 socket_names.push(binding.global_var_name.clone());
             }
         }
@@ -1042,15 +1145,31 @@ impl GraphOps {
         // add fragment shader sockets
         //   render attachments
         for output in frag.fragment_outputs.iter() {
+            socket_bindings.push((
+                socket_names.len(),
+                SocketBinding::FragmentAttachment {
+                    location: output.location,
+                },
+            ));
             socket_names.push(output.name.as_str().into());
         }
-        
+
         //   bind groups
         for group in frag.group_bindings.iter() {
             for binding in group.bindings.iter() {
+                let ix = socket_names.len();
+                socket_bindings.push((
+                    ix,
+                    SocketBinding::fragment_bind_group(
+                        group.group_ix,
+                        binding.binding.binding,
+                    ),
+                ));
                 socket_names.push(binding.global_var_name.clone());
             }
         }
+
+        socket_bindings.sort();
 
         let schema = NodeSchema {
             node_type: NodeType::Graphics,
@@ -1062,25 +1181,49 @@ impl GraphOps {
             source_rules_sockets: vec![],
             source_rules_scalars: vec![],
 
+            socket_bindings,
+
             default_sources: HashMap::default(),
             create_source_metadata: HashMap::default(),
         };
 
         self.graphics.push(graphics);
 
+        self.schema_ops.insert(schema_id, op_id);
+
         Ok((schema, op_id))
     }
 }
 
+
+fn preprocess_graphics_node<F>(
+    graph_ops: &mut GraphOps,
+    socket_resources: &BTreeMap<(NodeId, LocalSocketIx), ResourceRef>,
+    owned_resources: &[Option<Resource>],
+    transient_resources: &HashMap<TransientId, &InputResource<'_>>,
+    node_id: NodeId, 
+    schema: &NodeSchema,
+    f: F) -> Result<()>
+where
+    F: Fn(&GraphicsPipeline),
+{
+
+    let mut op_state = graph_ops.node_op_state.entry(node_id).or_default();
+    // create bind groups
+
+    Ok(())
+}
 
 struct SocketAnnotations {
     name_id_cache: HashMap<String, usize>,
     annotations: BTreeMap<(NodeId, LocalSocketIx), (usize, rhai::Map)>,
 }
 
+#[derive(Default)]
 pub struct NodeOpState {
     bind_groups: Vec<wgpu::BindGroup>,
-
     node_parameters: rhai::Map,
 
+    // only used by compute
+    workgroup_count: Option<[u32; 3]>,
 }
