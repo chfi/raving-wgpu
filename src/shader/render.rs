@@ -39,6 +39,14 @@ impl GraphicsPipeline {
     }
     */
 
+    pub fn create_bind_groups(&self,
+        state: &crate::State,
+
+    ) {
+        todo!();
+
+    }
+
     pub fn new(
         state: &crate::State,
         vertex: VertexShaderInstance,
@@ -215,7 +223,7 @@ impl VertexShaderInstance {
 
 #[derive(Debug)]
 pub struct FragmentShaderInstance {
-    shader: Arc<FragmentShader>,
+    pub shader: Arc<FragmentShader>,
 
     attachment_formats: Vec<wgpu::TextureFormat>,
     depth_format: Option<wgpu::TextureFormat>,

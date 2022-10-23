@@ -44,6 +44,15 @@ impl GroupBindings {
         Ok(bind_groups)
     }
 
+    pub fn create_bind_group_new(
+        &self,
+        state: &crate::State,
+        layout: &wgpu::BindGroupLayout,
+    ) {
+
+        todo!();
+    }
+
     pub fn create_bind_group(
         &self,
         state: &crate::State,

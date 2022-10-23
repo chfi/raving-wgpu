@@ -5,12 +5,13 @@ use std::{
 
 use datafrog::{Iteration, Relation, RelationLeaper, Variable};
 use rustc_hash::FxHashMap;
-use wgpu::{SubmissionIndex, TextureUsages};
+use wgpu::{BindingResource, BindingType, SubmissionIndex, TextureUsages};
 
 use std::sync::Arc;
 
 use crate::{
     shader::{
+        interface::GroupBindings,
         render::{
             FragmentShader, FragmentShaderInstance, GraphicsPipeline,
             VertexShader, VertexShaderInstance,
@@ -183,6 +184,57 @@ type TransientId = usize;
 enum ResourceRef {
     Owned(ResourceId),
     Transient(TransientId),
+}
+
+impl ResourceRef {
+    fn get_as_input<'a>(
+        &self,
+        owned_resources: &'a [Option<Resource>],
+        resource_metadata: &[ResourceMeta],
+        transient_resources: &'a FxHashMap<TransientId, &'a InputResource<'a>>,
+    ) -> Option<InputResource<'a>> {
+        match self {
+            ResourceRef::Owned(r) => {
+                let res = owned_resources.get(*r)?.as_ref()?;
+
+                let meta = resource_metadata.get(*r)?;
+
+                match (res, *meta) {
+                    (
+                        Resource::Buffer(buffer),
+                        ResourceMeta::Buffer {
+                            size,
+                            usage,
+                            stride,
+                        },
+                    ) => Some(InputResource::Buffer {
+                        size: size?,
+                        stride,
+                        buffer,
+                    }),
+                    (
+                        Resource::Texture(texture),
+                        ResourceMeta::Texture {
+                            size,
+                            format,
+                            usage,
+                        },
+                    ) => Some(InputResource::Texture {
+                        size: size?,
+                        format: format?,
+
+                        texture: Some(&texture.texture),
+                        view: Some(&texture.view),
+                        sampler: Some(&texture.sampler),
+                    }),
+                    _ => None,
+                }
+            }
+            ResourceRef::Transient(r) => {
+                transient_resources.get(r).copied().copied()
+            }
+        }
+    }
 }
 
 pub enum SocketState {
@@ -393,13 +445,16 @@ pub struct Graph {
     // transient_links: Vec<(TransientId, (NodeId, LocalSocketIx))>,
     // transient_resource_links: HashMap<String, Vec<(NodeId, LocalSocketIx)>>,
     // transients_meta_cache: HashMap<String, ResourceMeta>,
+    ops: GraphOps,
 }
 
+#[derive(Clone, Copy)]
 pub enum InputResource<'a> {
     Texture {
         size: [u32; 2],
         format: wgpu::TextureFormat,
 
+        sampler: Option<&'a wgpu::Sampler>,
         texture: Option<&'a wgpu::Texture>,
         view: Option<&'a wgpu::TextureView>,
     },
@@ -407,32 +462,71 @@ pub enum InputResource<'a> {
         size: usize,
         stride: Option<usize>,
 
-        buffer: Option<&'a wgpu::Buffer>,
+        buffer: &'a wgpu::Buffer,
     },
 }
 
 impl<'a> InputResource<'a> {
-    pub fn metadata(&self) -> ResourceMeta {
-        match self {
+    fn create_bind_group_entry(
+        &self,
+        binding: u32,
+        entry: &wgpu::BindGroupLayoutEntry,
+    ) -> Result<wgpu::BindGroupEntry<'a>> {
+        let binding_resource = match self {
             InputResource::Texture {
                 size,
                 format,
+                sampler,
                 texture,
                 view,
-            } => ResourceMeta::Texture {
-                size: Some(*size),
-                format: Some(*format),
-                usage: None,
+            } => match entry.ty {
+                BindingType::Sampler(_) => {
+                    BindingResource::Sampler(&sampler.as_ref().unwrap())
+                }
+                BindingType::Texture { .. }
+                | BindingType::StorageTexture { .. } => {
+                    BindingResource::TextureView(&view.as_ref().unwrap())
+                }
+                BindingType::Buffer { .. } => {
+                    panic!("TODO: Binding type mismatch!");
+                }
             },
             InputResource::Buffer {
                 size,
                 stride,
                 buffer,
-            } => ResourceMeta::Buffer {
-                size: Some(*size),
-                usage: None,
-                stride: *stride,
+            } => match entry.ty {
+                BindingType::Buffer { .. } => {
+                    BindingResource::Buffer(buffer.as_entire_buffer_binding())
+                }
+                _ => {
+                    panic!("TODO: Binding type mismatch!");
+                }
             },
+        };
+
+        Ok(wgpu::BindGroupEntry {
+            binding,
+            resource: binding_resource,
+        })
+    }
+
+    pub fn metadata(&self) -> ResourceMeta {
+        match self {
+            InputResource::Texture { size, format, .. } => {
+                ResourceMeta::Texture {
+                    size: Some(*size),
+                    format: Some(*format),
+                    usage: None,
+                }
+            }
+            InputResource::Buffer { size, stride, .. } => {
+                ResourceMeta::Buffer {
+                    size: Some(*size),
+                    usage: None,
+                    stride: *stride,
+                }
+            }
         }
     }
 
@@ -463,6 +557,7 @@ impl Graph {
             transient_cache: BTreeMap::default(),
             transient_links: BTreeMap::new(),
             // transients_meta_cache: HashMap::default(),
+            ops: GraphOps::default(),
         }
     }
 
@@ -703,13 +798,36 @@ impl Graph {
             }
             refs
         };
-        
+
         let transient_res_ids = self.map_transient_resource_ids(transient_res);
 
         // walk the graph in execution order, recording the node commands
         // in order to a command encoder
         let topo_order = self.build_topological_order()?;
-        
+
+        for node_id in topo_order.iter() {
+            let node = &self.nodes[node_id.0];
+            let schema = &self.schemas[node.schema.0];
+
+            if matches!(schema.node_type, NodeType::Resource) {
+                continue;
+            }
+
+            let op_id = self.ops.schema_ops.get(&node.schema).unwrap();
+
+            match op_id {
+                NodeOpId::NoOp => (),
+                NodeOpId::Graphics(gfx_id) => {
+                    let pipeline = &self.ops.graphics[*gfx_id];
+
+                    todo!();
+                }
+                NodeOpId::Compute(comp_id) => {
+                    let pipeline = &self.ops.compute[*comp_id];
+                    todo!();
+                }
+            }
+        }
 
         // submit the commands to the GPU queue and return the submission index
 
@@ -820,9 +938,10 @@ impl Graph {
 
     // assumes that the transient cache has already been updated
     // for the provided map
-    fn map_transient_resource_ids<'a>(&self, 
+    fn map_transient_resource_ids<'a>(
+        &self,
         transient_res: &'a HashMap<String, InputResource<'a>>,
-    ) -> HashMap<TransientId, &'a InputResource<'a>> {
+    ) -> FxHashMap<TransientId, &'a InputResource<'a>> {
         let mut output = HashMap::default();
 
         for (name, res) in transient_res.iter() {
@@ -913,6 +1032,37 @@ impl Graph {
 
         Ok(())
     }
+
+    //////////
+    ///
+
+    fn create_bind_group_entries<'a>(
+        &'a self,
+        state: &State,
+        socket_res_refs: &BTreeMap<(NodeId, LocalSocketIx), ResourceRef>,
+        transient_resources: &'a FxHashMap<TransientId, &InputResource<'a>>,
+        binds: &BTreeMap<(u32, u32), LocalSocketIx>,
+        node_id: NodeId,
+        group_bindings: impl IntoIterator<Item = &'a GroupBindings>,
+    ) -> Result<Vec<Vec<wgpu::BindGroupEntry<'a>>>> {
+        let owned_resources = &self.resources;
+        let resource_metadata = &self.resource_meta;
+
+        let group_entries = create_bind_group_entries(
+            state,
+            socket_res_refs,
+            owned_resources,
+            resource_metadata,
+            transient_resources,
+            binds,
+            node_id,
+            group_bindings,
+        )?;
+
+        Ok(group_entries)
+    }
+
+    //////////
 
     pub fn add_schemas(&mut self) -> Result<()> {
         {
@@ -1054,6 +1204,13 @@ pub enum NodeOpId {
     Compute(usize),
 }
 
+struct GraphicsPipelineOp {
+    pipeline: GraphicsPipeline,
+
+    preprocess: Arc<dyn Fn()>,
+}
+
+#[derive(Default)]
 pub struct GraphOps {
     // vertex_shaders: HashMap<PathBuf, VertexShader>,
     // fragment_shaders: HashMap<PathBuf, FragmentShader>,
@@ -1066,6 +1223,95 @@ pub struct GraphOps {
 }
 
 impl GraphOps {
+    // returns `true` if `self.node_op_state` was updated
+    fn preprocess_node<'a>(
+        &mut self,
+        state: &State,
+        socket_res_refs: &'a BTreeMap<(NodeId, LocalSocketIx), ResourceRef>,
+        owned_res: &'a [Option<Resource>],
+        res_meta: &[ResourceMeta],
+        transient_res: &'a FxHashMap<TransientId, &'a InputResource<'a>>,
+        schema: &NodeSchema,
+        node_id: NodeId,
+    ) -> Result<bool> {
+        let schema_id = schema.schema_id;
+
+        let op_id = self.schema_ops.get(&schema_id).unwrap();
+        if matches!(op_id, NodeOpId::NoOp) {
+            // don't need to do anything
+            return Ok(false);
+        }
+
+        let inv_bindings = schema
+            .socket_bindings
+            .iter()
+            .map(|(s, b)| (*b, *s))
+            .collect::<Vec<_>>();
+
+        let mut vert_binds = BTreeMap::default();
+        let mut frag_binds = BTreeMap::default();
+        let mut comp_binds = BTreeMap::default();
+
+        for (socket, binding) in schema.socket_bindings.iter() {
+            match binding {
+                SocketBinding::BindGroup {
+                    stage,
+                    group,
+                    binding,
+                } => {
+                    let key = (*group, *binding);
+                    match stage {
+                        naga::ShaderStage::Vertex => {
+                            vert_binds.insert(key, *socket);
+                        }
+                        naga::ShaderStage::Fragment => {
+                            frag_binds.insert(key, *socket);
+                        }
+                        naga::ShaderStage::Compute => {
+                            comp_binds.insert(key, *socket);
+                        }
+                    }
+                }
+                SocketBinding::VertexBuffer { slot } => {
+                    // todo!();
+                }
+                SocketBinding::FragmentAttachment { location } => {
+                    // todo!();
+                }
+            }
+        }
+
+        match op_id {
+            NodeOpId::Graphics(gfx_id) => {
+                let pipeline = &self.graphics[*gfx_id];
+
+                let vert_groups = &pipeline.vertex.shader.group_bindings;
+
+                let vert_group_entries = create_bind_group_entries_alt(
+                    socket_res_refs,
+                    owned_res,
+                    res_meta,
+                    transient_res,
+                    &vert_binds,
+                    vert_groups,
+                    node_id,
+                )?;
+                let frag_groups = &pipeline.fragment.shader.group_bindings;
+
+                // use schema.socket_bindings to map
+
+                todo!();
+            }
+            NodeOpId::Compute(comp_id) => {
+                let pipeline = &self.compute[*comp_id];
+                todo!();
+            }
+            NodeOpId::NoOp => unreachable!(),
+        }
+
+        Ok(true)
+    }
+
     pub fn create_graphics_schema(
         &mut self,
         state: &State,
@@ -1123,7 +1369,7 @@ impl GraphOps {
         // hardcoded to a single vertex buffer
         socket_bindings.push((
             socket_names.len(),
-            SocketBinding::VertexBuffer { slot: 0 }
+            SocketBinding::VertexBuffer { slot: 0 },
         ));
         socket_names.push("vertex_in".into());
 
@@ -1195,23 +1441,99 @@ impl GraphOps {
     }
 }
 
-
 fn preprocess_graphics_node<F>(
-    graph_ops: &mut GraphOps,
-    socket_resources: &BTreeMap<(NodeId, LocalSocketIx), ResourceRef>,
+    socket_res_refs: &BTreeMap<(NodeId, LocalSocketIx), ResourceRef>,
     owned_resources: &[Option<Resource>],
     transient_resources: &HashMap<TransientId, &InputResource<'_>>,
-    node_id: NodeId, 
+    node_id: NodeId,
     schema: &NodeSchema,
-    f: F) -> Result<()>
+    f: F,
+) -> Result<()>
 where
     F: Fn(&GraphicsPipeline),
 {
-
-    let mut op_state = graph_ops.node_op_state.entry(node_id).or_default();
+    // let mut op_state = graph_ops.node_op_state.entry(node_id).or_default();
     // create bind groups
 
     Ok(())
+}
+
+fn create_bind_group_entries<'a>(
+    state: &State,
+    socket_res_refs: &BTreeMap<(NodeId, LocalSocketIx), ResourceRef>,
+    owned_resources: &'a [Option<Resource>],
+    resource_metadata: &[ResourceMeta],
+    transient_resources: &'a FxHashMap<TransientId, &InputResource<'a>>,
+    binds: &BTreeMap<(u32, u32), LocalSocketIx>,
+    node_id: NodeId,
+    group_bindings: impl IntoIterator<Item = &'a GroupBindings>,
+) -> Result<Vec<Vec<wgpu::BindGroupEntry<'a>>>> {
+    let mut bind_groups = Vec::new();
+
+    for group in group_bindings {
+        let mut entries = Vec::new();
+
+        let group_ix = group.group_ix;
+
+        for (binding_ix, entry) in group.entries.iter().enumerate() {
+            let binding_ix = entry.binding;
+            let socket = *binds.get(&(group_ix, binding_ix)).unwrap();
+
+            let res_ref = socket_res_refs.get(&(node_id, socket)).unwrap();
+
+            let in_res = res_ref
+                .get_as_input(
+                    owned_resources,
+                    resource_metadata,
+                    transient_resources,
+                )
+                .unwrap();
+
+            let binding_resource = match in_res {
+                InputResource::Texture {
+                    size,
+                    format,
+                    sampler,
+                    texture,
+                    view,
+                } => match entry.ty {
+                    BindingType::Sampler(_) => {
+                        BindingResource::Sampler(&sampler.as_ref().unwrap())
+                    }
+                    BindingType::Texture { .. }
+                    | BindingType::StorageTexture { .. } => {
+                        BindingResource::TextureView(&view.as_ref().unwrap())
+                    }
+                    BindingType::Buffer { .. } => {
+                        panic!("TODO: Binding type mismatch!");
+                    }
+                },
+                InputResource::Buffer {
+                    size,
+                    stride,
+                    buffer,
+                } => match entry.ty {
+                    BindingType::Buffer { .. } => BindingResource::Buffer(
+                        buffer.as_entire_buffer_binding(),
+                    ),
+                    _ => {
+                        panic!("TODO: Binding type mismatch!");
+                    }
+                },
+            };
+
+            let entry = wgpu::BindGroupEntry {
+                binding: binding_ix as u32,
+                resource: binding_resource,
+            };
+
+            entries.push(entry);
+        }
+
+        bind_groups.push(entries);
+    }
+
+    Ok(bind_groups)
 }
 
 struct SocketAnnotations {
@@ -1226,4 +1548,40 @@ pub struct NodeOpState {
 
     // only used by compute
     workgroup_count: Option<[u32; 3]>,
+}
+
+fn create_bind_group_entries_alt<'a>(
+    // (group_ix, binding_ix) -> local socket
+    socket_res_refs: &'a BTreeMap<(NodeId, LocalSocketIx), ResourceRef>,
+    owned_res: &'a [Option<Resource>],
+    res_meta: &[ResourceMeta],
+    transient_res: &'a FxHashMap<TransientId, &'a InputResource<'a>>,
+    bind_sockets: &BTreeMap<(u32, u32), LocalSocketIx>,
+    group_bindings: &[GroupBindings],
+    node_id: NodeId,
+) -> Result<Vec<Vec<wgpu::BindGroupEntry<'a>>>> {
+    let vert_group_entries = group_bindings
+        .iter()
+        .map(|group| {
+            let mut entries = Vec::new();
+            for (b_ix, l_entry) in group.entries.iter().enumerate() {
+                let key = (group.group_ix, b_ix as u32);
+                let socket = bind_sockets.get(&key).unwrap();
+
+                let res_ref = &socket_res_refs[&(node_id, *socket)];
+
+                let in_res = res_ref
+                    .get_as_input(owned_res, res_meta, transient_res)
+                    .unwrap();
+
+                let entry = in_res
+                    .create_bind_group_entry(b_ix as u32, l_entry)
+                    .unwrap();
+                entries.push(entry);
+            }
+            entries
+        })
+        .collect::<Vec<_>>();
+
+    Ok(vert_group_entries)
 }
