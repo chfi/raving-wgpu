@@ -824,6 +824,13 @@ impl Graph {
 
         let transient_res_ids = self.map_transient_resource_ids(transient_res);
 
+        let resource_ctx = ResourceCtx {
+            socket_resource_refs: &socket_res_refs,
+            owned_resources: &self.resources,
+            resource_metadata: &self.resource_meta,
+            transient_resource: &transient_res_ids,
+        };
+
         // walk the graph in execution order, recording the node commands
         // in order to a command encoder
         let topo_order = self.build_topological_order()?;
@@ -833,15 +840,8 @@ impl Graph {
             let node = &self.nodes[node_id.0];
             let schema = &self.schemas[node.schema.0];
 
-            self.ops.preprocess_node(
-                state,
-                &socket_res_refs,
-                &self.resources,
-                &self.resource_meta,
-                &transient_res_ids,
-                schema,
-                *node_id,
-            )?;
+            self.ops
+                .preprocess_node(state, &resource_ctx, schema, *node_id)?;
         }
 
         for (ix, node) in self.nodes.iter().enumerate() {
@@ -875,10 +875,7 @@ impl Graph {
 
             self.ops.execute_node(
                 state,
-                &socket_res_refs,
-                &self.resources,
-                &self.resource_meta,
-                &transient_res_ids,
+                &resource_ctx,
                 schema,
                 *node_id,
                 &mut encoder,
@@ -1231,12 +1228,6 @@ pub enum NodeOpId {
     Compute(usize),
 }
 
-struct GraphicsPipelineOp {
-    pipeline: GraphicsPipeline,
-
-    preprocess: Arc<dyn Fn()>,
-}
-
 #[derive(Default)]
 pub struct GraphOps {
     // vertex_shaders: HashMap<PathBuf, VertexShader>,
@@ -1249,14 +1240,53 @@ pub struct GraphOps {
     schema_ops: FxHashMap<NodeSchemaId, NodeOpId>,
 }
 
+pub struct ResourceCtx<'a> {
+    socket_resource_refs: &'a BTreeMap<(NodeId, LocalSocketIx), ResourceRef>,
+    owned_resources: &'a [Option<Resource>],
+    resource_metadata: &'a [ResourceMeta],
+    transient_resource: &'a FxHashMap<TransientId, &'a InputResource<'a>>,
+}
+
+pub struct NodeCtx<'a> {
+    resource: &'a ResourceCtx<'a>,
+    node_id: NodeId,
+}
+
+impl<'a> NodeCtx<'a> {
+    pub fn get_resource_at_socket(
+        &self,
+        socket: LocalSocketIx,
+    ) -> Result<InputResource<'a>> {
+        self.resource.get_resource_at_socket(self.node_id, socket)
+    }
+}
+
+impl<'a> ResourceCtx<'a> {
+    // InputResources includes metadata
+    pub fn get_resource_at_socket(
+        &self,
+        node_id: NodeId,
+        socket: LocalSocketIx,
+    ) -> Result<InputResource<'a>> {
+        let res_ref = &self.socket_resource_refs[&(node_id, socket)];
+
+        let in_res = res_ref
+            .get_as_input(
+                &self.owned_resources,
+                &self.resource_metadata,
+                &self.transient_resource,
+            )
+            .unwrap();
+
+        Ok(in_res)
+    }
+}
+
 impl GraphOps {
     fn preprocess_node<'a>(
         &mut self,
         state: &State,
-        socket_res_refs: &'a BTreeMap<(NodeId, LocalSocketIx), ResourceRef>,
-        owned_res: &'a [Option<Resource>],
-        res_meta: &[ResourceMeta],
-        transient_res: &'a FxHashMap<TransientId, &'a InputResource<'a>>,
+        resource_ctx: &'a ResourceCtx<'a>,
         schema: &NodeSchema,
         node_id: NodeId,
     ) -> Result<bool> {
@@ -1322,10 +1352,11 @@ impl GraphOps {
             // let vert_groups = &pipeline.vertex.shader.group_bindings;
 
             let group_entries = create_bind_group_entries(
-                socket_res_refs,
-                owned_res,
-                res_meta,
-                transient_res,
+                resource_ctx,
+                // socket_res_refs,
+                // owned_res,
+                // res_meta,
+                // transient_res,
                 bind_sockets,
                 group_bindings,
                 node_id,
@@ -1393,10 +1424,11 @@ impl GraphOps {
     fn execute_node<'a>(
         &self,
         state: &State,
-        socket_res_refs: &'a BTreeMap<(NodeId, LocalSocketIx), ResourceRef>,
-        owned_res: &'a [Option<Resource>],
-        res_meta: &[ResourceMeta],
-        transient_res: &'a FxHashMap<TransientId, &'a InputResource<'a>>,
+        resource_ctx: &'a ResourceCtx<'a>,
+        // socket_res_refs: &'a BTreeMap<(NodeId, LocalSocketIx), ResourceRef>,
+        // owned_res: &'a [Option<Resource>],
+        // res_meta: &[ResourceMeta],
+        // transient_res: &'a FxHashMap<TransientId, &'a InputResource<'a>>,
         schema: &NodeSchema,
         node_id: NodeId,
         encoder: &mut CommandEncoder,
@@ -1418,16 +1450,113 @@ impl GraphOps {
         };
 
         match op_id {
-            NodeOpId::Graphics(oi) => {
-                todo!();
+            NodeOpId::Graphics(i) => {
+                log::warn!("executing graphics node");
+                let graphics = &self.graphics[*i];
+
+
+                let mut vertex_buffers = op_state
+                    .vertex_buffers
+                    .iter()
+                    .map(|(&slot, &socket)| {
+                        let res = resource_ctx
+                            .get_resource_at_socket(node_id, socket)
+                            .unwrap();
+
+                        if let InputResource::Buffer {
+                            size,
+                            stride,
+                            buffer,
+                        } = res
+                        {
+                            (slot, (buffer, size, stride))
+                        } else {
+                            panic!("texture was used as render attachment!");
+                        }
+                    })
+                    .collect::<Vec<_>>();
+
+                vertex_buffers.sort_by_key(|(a, _)| *a);
+
+                let mut attchs = op_state
+                    .attachments
+                    .iter()
+                    .map(|(&loc, &socket)| {
+                        let res = resource_ctx
+                            .get_resource_at_socket(node_id, socket)
+                            .unwrap();
+
+                        let view =
+                            if let InputResource::Texture { view, .. } = res {
+                                view.unwrap()
+                            } else {
+                                panic!("buffer was used as render attachment!");
+                            };
+
+                        (
+                            loc,
+                            Some(wgpu::RenderPassColorAttachment {
+                                view: &view,
+                                resolve_target: None,
+                                ops: wgpu::Operations {
+                                    load: wgpu::LoadOp::Clear(wgpu::Color {
+                                        r: 0.0,
+                                        g: 0.0,
+                                        b: 0.0,
+                                        a: 1.0,
+                                    }),
+                                    store: true,
+                                },
+                            }),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                    
+
+                attchs.sort_by_key(|(a, _)| *a);
+                let attchs =
+                    attchs.into_iter().map(|(_, b)| b).collect::<Vec<_>>();
+
+                {
+                    let label = format!("Node {} - render pass", node_id.0);
+                    let desc = wgpu::RenderPassDescriptor {
+                        label: Some(label.as_str()),
+                        color_attachments: attchs.as_slice(),
+                        depth_stencil_attachment: None,
+                    };
+
+                    let mut pass = encoder.begin_render_pass(&desc);
+
+                    pass.set_pipeline(&graphics.pipeline);
+
+                    for (slot, (buf, _size, _stride)) in vertex_buffers.iter() {
+                        pass.set_vertex_buffer(*slot, buf.slice(..));
+                    }
+
+                    // pass.set_bind_group(index, bind_group, offsets)
+
+                    let (vertices, instances) = {
+                        let (_, size, stride) = vertex_buffers[0].1;
+
+                        // TODO: optionally set vertices/instances via NodeOpState
+                        let stride = stride.expect("vertex buffer needs stride to draw");
+
+                        let count = (size / stride) as u32;
+                        ((0..count), (0..1))
+                    };
+
+                    pass.draw(vertices, instances);
+                    // pass.draw(0..6, 0..1);
+                }
             }
-            NodeOpId::Compute(oi) => {
+            NodeOpId::Compute(i) => {
+                log::warn!("executing compute node");
                 todo!();
             }
             NodeOpId::NoOp => (),
         }
 
-        todo!();
+        Ok(true)
     }
 
     pub fn create_compute_schema(
@@ -1439,7 +1568,7 @@ impl GraphOps {
         let comp = ComputeShader::from_spirv(&state, comp_src, "main")?;
 
         let op_id = NodeOpId::Compute(self.compute.len());
-        
+
         let mut socket_names = Vec::new();
         let mut socket_bindings = Vec::new();
 
@@ -1457,9 +1586,8 @@ impl GraphOps {
                 socket_names.push(binding.global_var_name.clone());
             }
         }
-        
+
         socket_bindings.sort();
-        
 
         let schema = NodeSchema {
             node_type: NodeType::Compute,
@@ -1622,8 +1750,8 @@ pub struct NodeOpState {
     bind_groups: FxHashMap<naga::ShaderStage, Vec<wgpu::BindGroup>>,
     node_parameters: rhai::Map,
 
-    vertex_buffers: FxHashMap<u32, LocalSocketIx>,
-    socket_bindings: FxHashMap<LocalSocketIx, ResourceRef>,
+    vertex_buffers: BTreeMap<u32, LocalSocketIx>,
+    attachments: BTreeMap<u32, LocalSocketIx>,
 
     // only used by compute
     workgroup_count: Option<[u32; 3]>,
@@ -1631,10 +1759,11 @@ pub struct NodeOpState {
 
 fn create_bind_group_entries<'a>(
     // (group_ix, binding_ix) -> local socket
-    socket_res_refs: &'a BTreeMap<(NodeId, LocalSocketIx), ResourceRef>,
-    owned_res: &'a [Option<Resource>],
-    res_meta: &[ResourceMeta],
-    transient_res: &'a FxHashMap<TransientId, &'a InputResource<'a>>,
+    resource_ctx: &'a ResourceCtx<'a>,
+    // socket_res_refs: &'a BTreeMap<(NodeId, LocalSocketIx), ResourceRef>,
+    // owned_res: &'a [Option<Resource>],
+    // res_meta: &[ResourceMeta],
+    // transient_res: &'a FxHashMap<TransientId, &'a InputResource<'a>>,
     bind_sockets: &BTreeMap<(u32, u32), LocalSocketIx>,
     group_bindings: &[GroupBindings],
     node_id: NodeId,
@@ -1647,10 +1776,8 @@ fn create_bind_group_entries<'a>(
                 let key = (group.group_ix, b_ix as u32);
                 let socket = bind_sockets.get(&key).unwrap();
 
-                let res_ref = &socket_res_refs[&(node_id, *socket)];
-
-                let in_res = res_ref
-                    .get_as_input(owned_res, res_meta, transient_res)
+                let in_res = resource_ctx
+                    .get_resource_at_socket(node_id, *socket)
                     .unwrap();
 
                 let entry = in_res
