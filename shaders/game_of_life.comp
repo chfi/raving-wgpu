@@ -1,0 +1,63 @@
+#version 450
+
+layout (rgba8, set = 0, binding = 0) writeonly uniform image2D image;
+
+// one thread per cell across the entire dense board
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout (set = 0, binding = 0) buffer GameWorld {
+    uint columns;
+    uint rows;
+    uint blocks[];
+} world;
+
+// layout (set = 0, binding = 0) uniform Input {
+//     vec4 color;
+//     vec2 offset;
+//     float scale;
+// } inputs;
+
+layout(push_constant) uniform Inputs {
+    vec4 color;
+    vec2 offset;
+    vec2 view_range;
+} inputs;
+
+#define BLOCK_ROW_0 0
+#define BLOCK_ROW_1 8
+#define BLOCK_ROW_2 16
+#define BLOCK_ROW_3 24
+
+bool alive(uint block, uint col, uint row) {
+    // the game board is represented using 32-bit unsigned integers,
+    // treating each cell as a single bit.
+
+    // each `uint` thus corresponds to a 4 row, 8 column block of cells,
+    // in row-major order (not that that really matters at this scale,
+    // other than for consistency)
+
+    // the easy way to avoid OOB
+    col = col % 8;
+    row = row % 4;
+    
+    // first, shift so the row is correct
+    uint cell = (block >> row);
+    return (cell >> col) == 1;
+}
+
+// layout (push_constant) uniform Inputs {
+//   vec4 color;
+// } frag_inputs;
+
+void main() {
+    uvec2 pixel = gl_GlobalInvocationID.xy;
+
+    uvec2 out_size = imageSize(image);
+
+
+
+    // vec4 base = vec4(v_tex_coords.x, 1.0, v_tex_coords.y, 1.0);
+    // vec4 color = vec4
+    // f_color = frag_inputs.color;
+    // f_color = base;
+}

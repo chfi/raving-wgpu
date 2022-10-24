@@ -43,3 +43,7 @@ path = "examples/shader_reflect.rs"
 [[example]]
 name = "simple_graph"
 path = "examples/simple_graph.rs"
+
+[[example]]
+name = "game_of_life"
+path = "examples/game_of_life.rs"
