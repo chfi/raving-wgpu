@@ -96,13 +96,15 @@ pub struct NodeSchema {
 }
 
 impl NodeSchema {
-    pub fn new_with<'a, F>(node_type: NodeType,
+    pub fn new_with<'a, F>(
+        node_type: NodeType,
         schema_id: NodeSchemaId,
         socket_names: impl IntoIterator<Item = &'a str>,
-        f: F
+        f: F,
     ) -> Self
-    where F: FnOnce(&mut NodeSchema) {
-
+    where
+        F: FnOnce(&mut NodeSchema),
+    {
         let mut schema = NodeSchema {
             node_type,
             schema_id,
@@ -401,13 +403,12 @@ impl ResourceMeta {
                 usage,
             } => {
                 if size.is_none() || format.is_none() || usage.is_none() {
-                    dbg!(size);
-                    dbg!(format);
-                    dbg!(usage);
-                    anyhow::bail!("Can't allocate image without \
+                    anyhow::bail!(
+                        "Can't allocate image without \
                     known size (was {size:?}), \
                     format (was {format:?}), \
-                    and usage (was {usage:?})");
+                    and usage (was {usage:?})"
+                    );
                 }
 
                 let [width, height] = size.unwrap();
@@ -475,7 +476,8 @@ pub struct Graph {
     transient_cache_id: HashMap<rhai::ImmutableString, TransientId>,
     transient_cache: BTreeMap<TransientId, ResourceMeta>,
 
-    transient_links: BTreeMap<(NodeId, LocalSocketIx), TransientId>,
+    transient_links: BTreeMap<(NodeId, LocalSocketIx), rhai::ImmutableString>,
+    // transient_links: BTreeMap<(NodeId, LocalSocketIx), TransientId>,
     // transient_links: BTreeMap<TransientId, Vec<(NodeId, LocalSocketIx)>>,
     // transient_links: Vec<(TransientId, (NodeId, LocalSocketIx))>,
     // transient_resource_links: HashMap<String, Vec<(NodeId, LocalSocketIx)>>,
@@ -622,11 +624,8 @@ impl Graph {
         comp_src: &[u8],
     ) -> Result<NodeSchemaId> {
         let schema_id = NodeSchemaId(self.schemas.len());
-        let schema = self.ops.create_compute_schema(
-            state,
-            comp_src,
-            schema_id,
-        )?;
+        let schema =
+            self.ops.create_compute_schema(state, comp_src, schema_id)?;
         self.schemas.push(schema);
 
         Ok(schema_id)
@@ -637,11 +636,17 @@ impl Graph {
         socket_names: impl IntoIterator<Item = &'a str>,
         // state: &State,
         f: F,
-    ) -> NodeSchemaId 
-    where F: FnOnce(&mut NodeSchema)
+    ) -> NodeSchemaId
+    where
+        F: FnOnce(&mut NodeSchema),
     {
         let schema_id = NodeSchemaId(self.schemas.len());
-        let schema = NodeSchema::new_with(NodeType::Resource, schema_id, socket_names, f);
+        let schema = NodeSchema::new_with(
+            NodeType::Resource,
+            schema_id,
+            socket_names,
+            f,
+        );
         self.schemas.push(schema);
         schema_id
     }
@@ -651,14 +656,13 @@ impl Graph {
         transient_res: &'a HashMap<String, InputResource<'a>>,
     ) {
         for (key, in_res) in transient_res.iter() {
-            dbg!(key);
             if let Some(id) = self.transient_cache_id.get(key.as_str()).copied()
             {
                 let meta = in_res.metadata();
-
                 let cache = self.transient_cache.get(&id).copied();
 
                 if cache != Some(meta) {
+                    log::warn!("transient cache update!");
                     self.transient_cache.insert(id, meta);
                 }
             } else {
@@ -717,7 +721,7 @@ impl Graph {
             }
         }
 
-        println!("socket_origins: {:?}", socket_origins);
+        // println!("socket_origins: {:?}", socket_origins);
 
         // now, build the relations for the datafrog programs
 
@@ -777,10 +781,14 @@ impl Graph {
             );
 
         socket_resources.extend(socket_origins.iter().copied());
-        socket_transients
-            .extend(self.transient_links.iter().map(|(&k, &v)| (k, v)));
 
-        println!("transient links: {:?}", self.transient_links);
+        socket_transients.extend(
+            self.transient_links
+                .iter()
+                .map(|(&k, v)| (k, *self.transient_cache_id.get(v).unwrap())),
+        );
+
+        // println!("transient links: {:?}", self.transient_links);
 
         while iteration.changed() {
             socket_resources.from_join(
@@ -814,24 +822,16 @@ impl Graph {
         self.socket_transients =
             socket_transients.elements.into_iter().collect();
 
-        println!("socket_resources: {:?}", self.socket_resources);
-        println!("socket_transients: {:?}", self.socket_transients);
+        // println!("socket_resources: {:?}", self.socket_resources);
+        // println!("socket_transients: {:?}", self.socket_transients);
 
         let topo_order = self.build_topological_order()?;
 
         for node in topo_order {
-            log::warn!("preparing node {:?}", node);
+            // log::warn!("preparing node {:?}", node);
             self.prepare_node_meta(graph_scalar_in, node)?;
         }
 
-        // return true if all sockets point to owned resources
-        // or cached transient resources
-
-        // for meta in self.resource_meta {
-        // match meta {
-        //
-        // }
-        // }
 
         Ok(true)
     }
@@ -847,7 +847,7 @@ impl Graph {
         // that have filled out `resource_meta`s -- afterward, all
         // owned resources should be ready for use
 
-        println!("{:#?}", self.socket_resources);
+        // println!("{:#?}", self.socket_resources);
 
         for (res_id, res_slot) in self.resources.iter_mut().enumerate() {
             if res_slot.is_some() {
@@ -859,9 +859,15 @@ impl Graph {
             let meta = self.resource_meta[res_id];
 
             match meta.allocate(state) {
-                Ok(res) => *res_slot = Some(res),
+                Ok(res) => {
+                    log::warn!("reallocating resource in slot {res_id}");
+                    *res_slot = Some(res);
+                }
                 Err(e) => {
-                    panic!("error allocating image for resource {res_id}: {:?}", e);
+                    panic!(
+                        "error allocating image for resource {res_id}: {:?}",
+                        e
+                    );
                 }
             }
             *res_slot = Some(meta.allocate(state)?);
@@ -899,7 +905,7 @@ impl Graph {
         let topo_order = self.build_topological_order()?;
 
         for node_id in topo_order.iter() {
-            println!("preprocessing node {}", node_id.0);
+            // println!("preprocessing node {}", node_id.0);
             let node = &self.nodes[node_id.0];
             let schema = &self.schemas[node.schema.0];
 
@@ -911,14 +917,14 @@ impl Graph {
             let node_id = NodeId::from(0);
 
             if let Some(op_state) = self.ops.node_op_state.get(&node_id) {
-                println!(
-                    "node {}\tbind group count: {}\t\
-                     node_parameters: {:?}\tworkgroup_count: {:?}",
-                    ix,
-                    op_state.bind_groups.len(),
-                    op_state.node_parameters,
-                    op_state.workgroup_count
-                );
+                // println!(
+                //     "node {}\tbind group count: {}\t\
+                //      node_parameters: {:?}\tworkgroup_count: {:?}",
+                //     ix,
+                //     op_state.bind_groups.len(),
+                //     op_state.node_parameters,
+                //     op_state.workgroup_count
+                // );
             }
         }
 
@@ -932,7 +938,7 @@ impl Graph {
 
         for node_id in topo_order.iter() {
             //
-            println!("executing node {}", node_id.0);
+            // println!("executing node {}", node_id.0);
             let node = &self.nodes[node_id.0];
             let schema = &self.schemas[node.schema.0];
 
@@ -980,13 +986,7 @@ impl Graph {
         dst: NodeId,
         dst_socket: LocalSocketIx,
     ) -> Option<()> {
-        dbg!(&self.transient_cache_id);
-        let id = *self.transient_cache_id.get(transient_key)?;
-        dbg!();
-
-        self.transient_links.insert((dst, dst_socket), id);
-
-        println!("transient links: {:?}", self.transient_links);
+        self.transient_links.insert((dst, dst_socket), transient_key.into());
 
         Some(())
     }
@@ -1098,28 +1098,28 @@ impl Graph {
                     .filter(|(s, _)| *s == socket_ix);
 
                 for (_dst_socket, source) in source_rules {
-                    log::warn!("applying rule");
+                    // log::warn!("applying rule");
                     let src_socket = source.other_socket_ix;
-                    log::warn!(
-                        "getting socket for node {}, socket {}",
-                        id.0,
-                        src_socket
-                    );
+                    // log::warn!(
+                    //     "getting socket for node {}, socket {}",
+                    //     id.0,
+                    //     src_socket
+                    // );
 
                     let src_meta = {
                         if let Some(t_id) =
                             self.socket_transients.get(&(id, src_socket))
                         {
-                            println!(
-                                "getting transient resource at socket {:?}.{}",
-                                id, src_socket
-                            );
+                            // println!(
+                            //     "getting transient resource at socket {:?}.{}",
+                            //     id, src_socket
+                            // );
                             &self.transient_cache[t_id]
                         } else {
-                            println!(
-                                "getting resource at socket {:?}.{}",
-                                id, src_socket
-                            );
+                            // println!(
+                            //     "getting resource at socket {:?}.{}",
+                            //     id, src_socket
+                            // );
                             let res_id = self
                                 .socket_resources
                                 .get(&(id, src_socket))
@@ -1416,7 +1416,6 @@ impl GraphOps {
             LocalSocketIx,
         >|
          -> Result<Vec<wgpu::BindGroup>> {
-
             let group_entries = create_bind_group_entries(
                 resource_ctx,
                 bind_sockets,
@@ -1510,18 +1509,20 @@ impl GraphOps {
             return Ok(false);
         };
 
-        println!("op_state: {:#?}", op_state);
+        // println!("op_state: {:#?}", op_state);
 
         match op_id {
             NodeOpId::Graphics(i) => {
-                log::warn!("executing graphics node");
+                // log::warn!("executing graphics node");
                 let graphics = &self.graphics[*i];
 
                 let mut vertex_buffers = op_state
                     .vertex_buffers
                     .iter()
                     .map(|(&slot, &socket)| {
-                        log::warn!("vertex buffer slot {slot}, socket {socket}");
+                        // log::warn!(
+                        //     "vertex buffer slot {slot}, socket {socket}"
+                        // );
                         let res = resource_ctx
                             .get_resource_at_socket(node_id, socket)
                             .unwrap();
@@ -1540,7 +1541,7 @@ impl GraphOps {
                     .collect::<Vec<_>>();
 
                 vertex_buffers.sort_by_key(|(a, _)| *a);
-                println!("vertex_buffers: {:#?}", vertex_buffers);
+                // println!("vertex_buffers: {:#?}", vertex_buffers);
 
                 let mut attchs = op_state
                     .attachments
@@ -1613,7 +1614,7 @@ impl GraphOps {
                 }
             }
             NodeOpId::Compute(i) => {
-                log::warn!("executing compute node");
+                // log::warn!("executing compute node");
                 todo!();
             }
             NodeOpId::NoOp => (),

@@ -345,11 +345,6 @@ pub async fn run() -> anyhow::Result<()> {
 
     let dims = [size.width, size.height];
 
-    let output = state.surface.get_current_texture()?;
-    let output_view = output
-        .texture
-        .create_view(&wgpu::TextureViewDescriptor::default());
-
     let mut graph = Graph::new();
 
     graph.add_schemas()?;
@@ -457,24 +452,12 @@ pub async fn run() -> anyhow::Result<()> {
     let mut graph_scalars = rhai::Map::default();
     graph_scalars.insert("dimensions".into(), rhai::Dynamic::from(dims));
 
-    /*
-    log::warn!("validating graph");
-    let valid = graph.validate(&transient_res, &graph_scalars)?;
+    let t = std::time::Instant::now();
 
-    if valid {
-        println!("validation successful");
-    } else {
-        log::error!("graph validation error");
-    }
+    state.resize(winit::dpi::PhysicalSize { width: 800, height: 600 });
+    std::thread::sleep(std::time::Duration::from_millis(50));
 
-    log::warn!("executing graph");
-    let sub_index = graph.execute(&state, &transient_res, &graph_scalars)?;
-    state
-        .device
-        .poll(wgpu::MaintainBase::WaitForSubmissionIndex(sub_index));
-
-    output.present();
-    */
+    let mut first_resize = true;
 
     event_loop.run(move |event, _, control_flow| {
         match event {
@@ -493,7 +476,13 @@ pub async fn run() -> anyhow::Result<()> {
                     ..
                 } => *control_flow = ControlFlow::Exit,
                 WindowEvent::Resized(physical_size) => {
-                    state.resize(*physical_size);
+                    // for some reason i get a validation error if i actually attempt
+                    // to execute the first resize
+                    if first_resize {
+                        first_resize = false;
+                    } else {
+                        state.resize(*physical_size);
+                    }
                 }
                 WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
                     state.resize(**new_inner_size);
@@ -535,17 +524,16 @@ pub async fn run() -> anyhow::Result<()> {
                     }
 
                     graph.update_transient_cache(&transient_res);
-                    log::warn!("validating graph");
+
+                    // log::warn!("validating graph");
                     let valid =
                         graph.validate(&transient_res, &graph_scalars).unwrap();
 
-                    if valid {
-                        println!("validation successful");
-                    } else {
+                    if !valid {
                         log::error!("graph validation error");
                     }
 
-                    log::warn!("executing graph");
+                    // log::warn!("executing graph");
                     let sub_index = graph
                         .execute(&state, &transient_res, &graph_scalars)
                         .unwrap();
