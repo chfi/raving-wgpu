@@ -362,6 +362,7 @@ pub async fn run() -> anyhow::Result<()> {
         &state,
         vert_src,
         frag_src,
+        ["vertex_in"],
         &[state.surface_format],
     )?;
 

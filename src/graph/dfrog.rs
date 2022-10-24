@@ -583,11 +583,12 @@ impl Graph {
         }
     }
 
-    pub fn add_graphics_schema(
+    pub fn add_graphics_schema<'a>(
         &mut self,
         state: &State,
         vert_src: &[u8],
         frag_src: &[u8],
+        vertex_slots: impl IntoIterator<Item = &'a str>,
         frag_out_formats: &[wgpu::TextureFormat],
     ) -> Result<NodeSchemaId> {
         let schema_id = NodeSchemaId(self.schemas.len());
@@ -595,6 +596,7 @@ impl Graph {
             state,
             vert_src,
             frag_src,
+            vertex_slots,
             frag_out_formats,
             schema_id,
         )?;
@@ -1725,11 +1727,12 @@ impl GraphOps {
         Ok(schema)
     }
 
-    pub fn create_graphics_schema(
+    pub fn create_graphics_schema<'a>(
         &mut self,
         state: &State,
         vert_src: &[u8],
         frag_src: &[u8],
+        vertex_slots: impl IntoIterator<Item = &'a str>,
         frag_out_formats: &[wgpu::TextureFormat],
         schema_id: NodeSchemaId,
     ) -> Result<NodeSchema> {
@@ -1781,12 +1784,13 @@ impl GraphOps {
 
         //   vertex buffers
         // hardcoded to a single vertex buffer
-        socket_bindings.push((
-            socket_names.len(),
-            SocketBinding::VertexBuffer { slot: 0 },
-        ));
-        socket_names.push("vertex_in".into());
-
+        for (ix, socket_name) in vertex_slots.into_iter().enumerate() {
+            socket_bindings.push((
+                socket_names.len(),
+                SocketBinding::VertexBuffer { slot: 0 },
+            ));
+            socket_names.push(socket_name.into());
+        }
 
         //   render attachments
         for output in frag.fragment_outputs.iter() {
@@ -1891,7 +1895,7 @@ impl NodeOpState {
         let frag = wgpu::ShaderStages::FRAGMENT;
 
         for (data, stage) in [(v_data, vert), (f_data, frag)].into_iter() {
-        // for (data, stage) in [(f_data, frag), (v_data, vert)].into_iter() {
+            // for (data, stage) in [(f_data, frag), (v_data, vert)].into_iter() {
             if let Some(data) = data {
                 let end = offset + data.len() as u32;
                 // dbg!(stage, offset..end);
