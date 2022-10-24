@@ -3,15 +3,15 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use datafrog::Relation;
 use rustc_hash::{FxHashMap, FxHashSet};
 use wgpu::{
-    BindingResource, BindingType, CommandEncoder, SubmissionIndex,
-    TextureUsages,
+    BindingResource, BindingType, CommandEncoder, ComputePass, RenderPass,
+    SubmissionIndex, TextureUsages,
 };
 
 use std::sync::Arc;
 
 use crate::{
     shader::{
-        interface::GroupBindings,
+        interface::{GroupBindings, PushConstants},
         render::{
             FragmentShader, FragmentShaderInstance, GraphicsPipeline,
             VertexShader, VertexShaderInstance,
@@ -621,7 +621,7 @@ impl Graph {
         state: &State,
         comp_src: &[u8],
         f: F,
-    ) -> Result<NodeSchemaId> 
+    ) -> Result<NodeSchemaId>
     where
         F: FnOnce(&mut NodeSchema),
     {
@@ -1275,7 +1275,7 @@ pub struct GraphOps {
     graphics: Vec<GraphicsPipeline>,
     compute: Vec<ComputeShader>,
 
-    node_op_state: FxHashMap<NodeId, NodeOpState>,
+    pub node_op_state: FxHashMap<NodeId, NodeOpState>,
     schema_ops: FxHashMap<NodeSchemaId, NodeOpId>,
 }
 
@@ -1323,6 +1323,56 @@ impl<'a> ResourceCtx<'a> {
 }
 
 impl GraphOps {
+    fn initialize_node_op_state(
+        &mut self,
+        schema: &NodeSchema,
+        node_id: NodeId,
+    ) -> Result<()> {
+        let schema_id = schema.schema_id;
+
+        let op_id = self.schema_ops.get(&schema_id);
+        if op_id.is_none() || matches!(op_id, Some(NodeOpId::NoOp)) {
+            // don't need to do anything
+            return Ok(());
+        }
+
+        let op_id = op_id.unwrap();
+
+        let op_state = self.node_op_state.entry(node_id).or_default();
+
+        let mut add_push_const =
+            |stage: naga::ShaderStage, push_const: &Option<PushConstants>| {
+                if let Some(pc) = push_const.as_ref() {
+                    op_state.push_constants.insert(stage, pc.clone());
+                }
+            };
+
+        match op_id {
+            NodeOpId::NoOp => (),
+            NodeOpId::Graphics(i) => {
+                let graphics = &self.graphics[*i];
+
+                add_push_const(
+                    naga::ShaderStage::Vertex,
+                    &graphics.vertex.shader.push_constants,
+                );
+                add_push_const(
+                    naga::ShaderStage::Fragment,
+                    &graphics.fragment.shader.push_constants,
+                );
+            }
+            NodeOpId::Compute(i) => {
+                let compute = &self.compute[*i];
+                add_push_const(
+                    naga::ShaderStage::Compute,
+                    &compute.clone_push_constants(),
+                );
+            }
+        }
+
+        Ok(())
+    }
+
     fn preprocess_node<'a>(
         &mut self,
         state: &State,
@@ -1330,6 +1380,10 @@ impl GraphOps {
         schema: &NodeSchema,
         node_id: NodeId,
     ) -> Result<bool> {
+        if !self.node_op_state.contains_key(&node_id) {
+            self.initialize_node_op_state(schema, node_id)?;
+        }
+
         let schema_id = schema.schema_id;
 
         let op_id = self.schema_ops.get(&schema_id);
@@ -1582,6 +1636,8 @@ impl GraphOps {
                         ((0..count), (0..1))
                     };
 
+                    op_state.set_render_push_constants(&mut pass);
+
                     pass.draw(vertices, instances);
                 }
             }
@@ -1604,6 +1660,8 @@ impl GraphOps {
                         }
                     }
                 }
+
+                op_state.set_compute_push_constants(&mut pass);
 
                 let [x, y, z] = op_state.workgroup_count.unwrap();
 
@@ -1809,8 +1867,48 @@ pub struct NodeOpState {
     vertex_buffers: BTreeMap<u32, LocalSocketIx>,
     attachments: BTreeMap<u32, LocalSocketIx>,
 
+    pub push_constants: FxHashMap<naga::ShaderStage, PushConstants>,
+
     // only used by compute
     workgroup_count: Option<[u32; 3]>,
+}
+
+impl NodeOpState {
+    fn get_push_constant_range(
+        &self,
+        stage: naga::ShaderStage,
+    ) -> Option<(wgpu::PushConstantRange, &[u8])> {
+        let wgpu_stage = match stage {
+            naga::ShaderStage::Vertex => wgpu::ShaderStages::VERTEX,
+            naga::ShaderStage::Fragment => wgpu::ShaderStages::FRAGMENT,
+            naga::ShaderStage::Compute => wgpu::ShaderStages::COMPUTE,
+        };
+
+        self.push_constants
+            .get(&stage)
+            .map(|c| (c.to_range(wgpu_stage), c.data()))
+    }
+
+    fn set_render_push_constants(&self, pass: &mut RenderPass) {
+        let mut offset = 0;
+
+        let v_range = self.get_push_constant_range(naga::ShaderStage::Vertex);
+        let f_range = self.get_push_constant_range(naga::ShaderStage::Fragment);
+
+        for (range, data) in [v_range, f_range].into_iter().filter_map(|x| x) {
+            let end = range.range.end;
+            pass.set_push_constants(wgpu::ShaderStages::VERTEX, offset, data);
+            offset = end;
+        }
+    }
+
+    fn set_compute_push_constants(&self, pass: &mut ComputePass) {
+        let range = self.get_push_constant_range(naga::ShaderStage::Compute);
+
+        if let Some((range, data)) = range {
+            pass.set_push_constants(0, data);
+        }
+    }
 }
 
 fn create_bind_group_entries<'a>(

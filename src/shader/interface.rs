@@ -390,6 +390,10 @@ pub struct PushConstants {
 }
 
 impl PushConstants {
+    pub fn data(&self) -> &[u8] {
+        self.buffer.as_slice()
+    }
+    
     pub fn to_range(&self, stages: wgpu::ShaderStages) -> PushConstantRange {
         let size = self.buffer.len();
 

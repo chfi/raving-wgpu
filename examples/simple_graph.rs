@@ -365,11 +365,6 @@ pub async fn run() -> anyhow::Result<()> {
         &[state.surface_format],
     )?;
 
-    let comp_src = include_bytes!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/shaders/shader.comp.spv"
-    ));
-
     let help_s = graph.add_custom_schema(["input", "output"], |schema| {
         /*
         This adds a custom resource node, with pretty minimal boilerplate,
@@ -384,6 +379,7 @@ pub async fn run() -> anyhow::Result<()> {
         schema.source_sockets.push((1, DataType::Texture));
 
         use wgpu::TextureUsages as Usage;
+        use SocketMetadataSource as Rule;
 
         schema.default_sources.insert(
             1,
@@ -394,9 +390,16 @@ pub async fn run() -> anyhow::Result<()> {
             },
         );
 
-        use SocketMetadataSource as Rule;
-
         schema.source_rules_sockets.push((1, Rule::texture_size(0)));
+    });
+
+    let comp_src = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/shaders/shader.comp.spv"
+    ));
+
+    let comp_s = graph.add_custom_compute_schema(&state, comp_src, |schema| {
+        log::warn!("adding custom compute schema");
     });
 
     let img_s = NodeSchemaId(0);
@@ -454,7 +457,10 @@ pub async fn run() -> anyhow::Result<()> {
 
     let t = std::time::Instant::now();
 
-    state.resize(winit::dpi::PhysicalSize { width: 800, height: 600 });
+    state.resize(winit::dpi::PhysicalSize {
+        width: 800,
+        height: 600,
+    });
     std::thread::sleep(std::time::Duration::from_millis(50));
 
     let mut first_resize = true;
@@ -522,6 +528,14 @@ pub async fn run() -> anyhow::Result<()> {
                                 buffer: &vertex_buffer,
                             },
                         );
+                    }
+
+                    {
+                        if let Some(op_state) =
+                            graph.ops.node_op_state.get_mut(&gfx_n_2)
+                        {
+                            log::warn!("{op_state:#?}");
+                        }
                     }
 
                     graph.update_transient_cache(&transient_res);
