@@ -445,7 +445,7 @@ pub struct Graph {
     // transient_links: Vec<(TransientId, (NodeId, LocalSocketIx))>,
     // transient_resource_links: HashMap<String, Vec<(NodeId, LocalSocketIx)>>,
     // transients_meta_cache: HashMap<String, ResourceMeta>,
-    ops: GraphOps,
+    pub ops: GraphOps,
 }
 
 #[derive(Clone, Copy)]
@@ -559,6 +559,26 @@ impl Graph {
             // transients_meta_cache: HashMap::default(),
             ops: GraphOps::default(),
         }
+    }
+
+    pub fn add_graphics_schema(
+        &mut self,
+        state: &State,
+        vert_src: &[u8],
+        frag_src: &[u8],
+        frag_out_formats: &[wgpu::TextureFormat],
+    ) -> Result<NodeSchemaId> {
+        let schema_id = NodeSchemaId(self.schemas.len());
+        let (schema, _op_id) = self.ops.create_graphics_schema(
+            state,
+            vert_src,
+            frag_src,
+            frag_out_formats,
+            schema_id,
+        )?;
+        self.schemas.push(schema);
+
+        Ok(schema_id)
     }
 
     pub fn update_transient_cache<'a>(
@@ -806,30 +826,40 @@ impl Graph {
         let topo_order = self.build_topological_order()?;
 
         for node_id in topo_order.iter() {
+            println!("preprocessing node {}", node_id.0);
             let node = &self.nodes[node_id.0];
             let schema = &self.schemas[node.schema.0];
 
-            if matches!(schema.node_type, NodeType::Resource) {
-                continue;
-            }
+            self.ops.preprocess_node(
+                state,
+                &socket_res_refs,
+                &self.resources,
+                &self.resource_meta,
+                &transient_res_ids,
+                schema,
+                *node_id,
+            )?;
+        }
 
-            let op_id = self.ops.schema_ops.get(&node.schema).unwrap();
+        for (ix, node) in self.nodes.iter().enumerate() {
+            let node_id = NodeId::from(0);
 
-            match op_id {
-                NodeOpId::NoOp => (),
-                NodeOpId::Graphics(gfx_id) => {
-                    let pipeline = &self.ops.graphics[*gfx_id];
-
-                    todo!();
-                }
-                NodeOpId::Compute(comp_id) => {
-                    let pipeline = &self.ops.compute[*comp_id];
-                    todo!();
-                }
+            if let Some(op_state) = self.ops.node_op_state.get(&node_id) {
+                println!(
+                    "node {}\tbind group count: {}\t\
+                     node_parameters: {:?}\tworkgroup_count: {:?}",
+                    ix,
+                    op_state.bind_groups.len(),
+                    op_state.node_parameters,
+                    op_state.workgroup_count
+                );
             }
         }
 
         // submit the commands to the GPU queue and return the submission index
+        for node_id in topo_order.iter() {
+            
+        }
 
         todo!();
     }
@@ -1034,33 +1064,6 @@ impl Graph {
     }
 
     //////////
-    ///
-
-    fn create_bind_group_entries<'a>(
-        &'a self,
-        state: &State,
-        socket_res_refs: &BTreeMap<(NodeId, LocalSocketIx), ResourceRef>,
-        transient_resources: &'a FxHashMap<TransientId, &InputResource<'a>>,
-        binds: &BTreeMap<(u32, u32), LocalSocketIx>,
-        node_id: NodeId,
-        group_bindings: impl IntoIterator<Item = &'a GroupBindings>,
-    ) -> Result<Vec<Vec<wgpu::BindGroupEntry<'a>>>> {
-        let owned_resources = &self.resources;
-        let resource_metadata = &self.resource_meta;
-
-        let group_entries = create_bind_group_entries(
-            state,
-            socket_res_refs,
-            owned_resources,
-            resource_metadata,
-            transient_resources,
-            binds,
-            node_id,
-            group_bindings,
-        )?;
-
-        Ok(group_entries)
-    }
 
     //////////
 
@@ -1236,11 +1239,13 @@ impl GraphOps {
     ) -> Result<bool> {
         let schema_id = schema.schema_id;
 
-        let op_id = self.schema_ops.get(&schema_id).unwrap();
-        if matches!(op_id, NodeOpId::NoOp) {
+        let op_id = self.schema_ops.get(&schema_id);
+        if op_id.is_none() || matches!(op_id, Some(NodeOpId::NoOp)) {
             // don't need to do anything
             return Ok(false);
         }
+
+        let op_id = op_id.unwrap();
 
         let inv_bindings = schema
             .socket_bindings
@@ -1287,7 +1292,7 @@ impl GraphOps {
 
                 let vert_groups = &pipeline.vertex.shader.group_bindings;
 
-                let vert_group_entries = create_bind_group_entries_alt(
+                let vert_group_entries = create_bind_group_entries(
                     socket_res_refs,
                     owned_res,
                     res_meta,
@@ -1296,15 +1301,88 @@ impl GraphOps {
                     vert_groups,
                     node_id,
                 )?;
+
+                let vert_groups: Vec<_> = vert_group_entries
+                    .into_iter()
+                    .zip(&pipeline.vertex.shader.bind_group_layouts)
+                    .map(|(entries, layout)| {
+                        state.device.create_bind_group(
+                            &wgpu::BindGroupDescriptor {
+                                label: None,
+                                layout,
+                                entries: entries.as_slice(),
+                            },
+                        )
+                    })
+                    .collect();
+
                 let frag_groups = &pipeline.fragment.shader.group_bindings;
 
-                // use schema.socket_bindings to map
+                let frag_group_entries = create_bind_group_entries(
+                    socket_res_refs,
+                    owned_res,
+                    res_meta,
+                    transient_res,
+                    &frag_binds,
+                    frag_groups,
+                    node_id,
+                )?;
 
-                todo!();
+                let frag_groups: Vec<_> = frag_group_entries
+                    .into_iter()
+                    .zip(&pipeline.fragment.shader.bind_group_layouts)
+                    .map(|(entries, layout)| {
+                        state.device.create_bind_group(
+                            &wgpu::BindGroupDescriptor {
+                                label: None,
+                                layout,
+                                entries: entries.as_slice(),
+                            },
+                        )
+                    })
+                    .collect();
+
+                let op_state = self.node_op_state.entry(node_id).or_default();
+                op_state
+                    .bind_groups
+                    .insert(naga::ShaderStage::Vertex, vert_groups);
+                op_state
+                    .bind_groups
+                    .insert(naga::ShaderStage::Fragment, frag_groups);
             }
             NodeOpId::Compute(comp_id) => {
                 let pipeline = &self.compute[*comp_id];
-                todo!();
+
+                let comp_groups = &pipeline.group_bindings;
+
+                let comp_group_entries = create_bind_group_entries(
+                    socket_res_refs,
+                    owned_res,
+                    res_meta,
+                    transient_res,
+                    &comp_binds,
+                    comp_groups,
+                    node_id,
+                )?;
+
+                let comp_groups: Vec<_> = comp_group_entries
+                    .into_iter()
+                    .zip(&pipeline.bind_group_layouts)
+                    .map(|(entries, layout)| {
+                        state.device.create_bind_group(
+                            &wgpu::BindGroupDescriptor {
+                                label: None,
+                                layout,
+                                entries: entries.as_slice(),
+                            },
+                        )
+                    })
+                    .collect();
+
+                let op_state = self.node_op_state.entry(node_id).or_default();
+                op_state
+                    .bind_groups
+                    .insert(naga::ShaderStage::Compute, comp_groups);
             }
             NodeOpId::NoOp => unreachable!(),
         }
@@ -1441,101 +1519,6 @@ impl GraphOps {
     }
 }
 
-fn preprocess_graphics_node<F>(
-    socket_res_refs: &BTreeMap<(NodeId, LocalSocketIx), ResourceRef>,
-    owned_resources: &[Option<Resource>],
-    transient_resources: &HashMap<TransientId, &InputResource<'_>>,
-    node_id: NodeId,
-    schema: &NodeSchema,
-    f: F,
-) -> Result<()>
-where
-    F: Fn(&GraphicsPipeline),
-{
-    // let mut op_state = graph_ops.node_op_state.entry(node_id).or_default();
-    // create bind groups
-
-    Ok(())
-}
-
-fn create_bind_group_entries<'a>(
-    state: &State,
-    socket_res_refs: &BTreeMap<(NodeId, LocalSocketIx), ResourceRef>,
-    owned_resources: &'a [Option<Resource>],
-    resource_metadata: &[ResourceMeta],
-    transient_resources: &'a FxHashMap<TransientId, &InputResource<'a>>,
-    binds: &BTreeMap<(u32, u32), LocalSocketIx>,
-    node_id: NodeId,
-    group_bindings: impl IntoIterator<Item = &'a GroupBindings>,
-) -> Result<Vec<Vec<wgpu::BindGroupEntry<'a>>>> {
-    let mut bind_groups = Vec::new();
-
-    for group in group_bindings {
-        let mut entries = Vec::new();
-
-        let group_ix = group.group_ix;
-
-        for (binding_ix, entry) in group.entries.iter().enumerate() {
-            let binding_ix = entry.binding;
-            let socket = *binds.get(&(group_ix, binding_ix)).unwrap();
-
-            let res_ref = socket_res_refs.get(&(node_id, socket)).unwrap();
-
-            let in_res = res_ref
-                .get_as_input(
-                    owned_resources,
-                    resource_metadata,
-                    transient_resources,
-                )
-                .unwrap();
-
-            let binding_resource = match in_res {
-                InputResource::Texture {
-                    size,
-                    format,
-                    sampler,
-                    texture,
-                    view,
-                } => match entry.ty {
-                    BindingType::Sampler(_) => {
-                        BindingResource::Sampler(&sampler.as_ref().unwrap())
-                    }
-                    BindingType::Texture { .. }
-                    | BindingType::StorageTexture { .. } => {
-                        BindingResource::TextureView(&view.as_ref().unwrap())
-                    }
-                    BindingType::Buffer { .. } => {
-                        panic!("TODO: Binding type mismatch!");
-                    }
-                },
-                InputResource::Buffer {
-                    size,
-                    stride,
-                    buffer,
-                } => match entry.ty {
-                    BindingType::Buffer { .. } => BindingResource::Buffer(
-                        buffer.as_entire_buffer_binding(),
-                    ),
-                    _ => {
-                        panic!("TODO: Binding type mismatch!");
-                    }
-                },
-            };
-
-            let entry = wgpu::BindGroupEntry {
-                binding: binding_ix as u32,
-                resource: binding_resource,
-            };
-
-            entries.push(entry);
-        }
-
-        bind_groups.push(entries);
-    }
-
-    Ok(bind_groups)
-}
-
 struct SocketAnnotations {
     name_id_cache: HashMap<String, usize>,
     annotations: BTreeMap<(NodeId, LocalSocketIx), (usize, rhai::Map)>,
@@ -1543,14 +1526,14 @@ struct SocketAnnotations {
 
 #[derive(Default)]
 pub struct NodeOpState {
-    bind_groups: Vec<wgpu::BindGroup>,
+    bind_groups: FxHashMap<naga::ShaderStage, Vec<wgpu::BindGroup>>,
     node_parameters: rhai::Map,
 
     // only used by compute
     workgroup_count: Option<[u32; 3]>,
 }
 
-fn create_bind_group_entries_alt<'a>(
+fn create_bind_group_entries<'a>(
     // (group_ix, binding_ix) -> local socket
     socket_res_refs: &'a BTreeMap<(NodeId, LocalSocketIx), ResourceRef>,
     owned_res: &'a [Option<Resource>],

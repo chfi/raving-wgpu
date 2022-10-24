@@ -347,12 +347,29 @@ pub async fn run() -> anyhow::Result<()> {
     let mut graph = Graph::new();
 
     graph.add_schemas()?;
+    
+    let vert_src = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/shaders/shader.vert.spv"
+    ));
+    let frag_src = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/shaders/uv_rb.frag.spv"
+    ));
+
+    let gfx_schema = graph.add_graphics_schema(
+        &state,
+        vert_src,
+        frag_src,
+        &[state.surface_format],
+    )?;
 
     let img_s = NodeSchemaId(0);
     let gfx_s = NodeSchemaId(1);
     let comp_s = NodeSchemaId(2);
 
-    let mut transient_res: HashMap<String, InputResource<'_>> = HashMap::default();
+    let mut transient_res: HashMap<String, InputResource<'_>> =
+        HashMap::default();
     {
         let size = dims;
         let format = state.surface_format;
@@ -364,28 +381,36 @@ pub async fn run() -> anyhow::Result<()> {
                 format,
                 texture: None,
                 view: Some(&output_view),
+                sampler: None,
             },
         );
     }
 
+    log::warn!("updating transient cache");
     graph.update_transient_cache(&transient_res);
 
-    let img_n1 = graph.add_node(img_s);
+    // let img_n1 = graph.add_node(img_s);
+
+    let gfx_n = graph.add_node(gfx_schema);
+
+
+
     // let img_n2 = graph.add_node(img_s);
-    let gfx_n = graph.add_node(gfx_s);
-    let comp_n = graph.add_node(comp_s);
+    // let gfx_n = graph.add_node(gfx_s);
+    // let comp_n = graph.add_node(comp_s);
 
-    graph.add_link(img_n1, 0, gfx_n, 0);
+    // graph.add_link(img_n1, 0, gfx_n, 0);
     // graph.add_link(img_n2, 0, gfx_n, 1);
-    graph.add_link(gfx_n, 1, comp_n, 0);
+    // graph.add_link(gfx_n, 1, comp_n, 0);
 
-    graph.add_link_from_transient("swapchain", gfx_n, 1);
+    graph.add_link_from_transient("swapchain", gfx_n, 0);
 
     // graph.add_link(comp_n, 1, gfx_n, 0);
 
     let mut graph_scalars = rhai::Map::default();
     graph_scalars.insert("dimensions".into(), rhai::Dynamic::from(dims));
 
+    log::warn!("validating graph");
     let valid = graph.validate(&transient_res, &graph_scalars)?;
 
     if valid {
@@ -394,6 +419,7 @@ pub async fn run() -> anyhow::Result<()> {
         log::error!("graph validation error");
     }
 
+    log::warn!("executing graph");
     let sub_index = graph.execute(&state, &transient_res, &graph_scalars)?;
 
     // output.present();
