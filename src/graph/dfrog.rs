@@ -4,7 +4,7 @@ use std::{
 };
 
 use datafrog::{Iteration, Relation, RelationLeaper, Variable};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use wgpu::{
     BindGroupEntry, BindingResource, BindingType, CommandEncoder,
     SubmissionIndex, TextureUsages,
@@ -473,6 +473,8 @@ pub struct Graph {
     resource_meta: Vec<ResourceMeta>,
     resources: Vec<Option<Resource>>,
 
+    // updated_transients: HashSet<rhai::ImmutableString>,
+    updated_transients: FxHashSet<TransientId>,
     transient_cache_id: HashMap<rhai::ImmutableString, TransientId>,
     transient_cache: BTreeMap<TransientId, ResourceMeta>,
 
@@ -590,6 +592,7 @@ impl Graph {
             socket_resources: BTreeMap::default(),
             socket_transients: BTreeMap::default(),
 
+            updated_transients: FxHashSet::default(),
             transient_cache_id: HashMap::default(),
             transient_cache: BTreeMap::default(),
             transient_links: BTreeMap::new(),
@@ -659,10 +662,14 @@ impl Graph {
             if let Some(id) = self.transient_cache_id.get(key.as_str()).copied()
             {
                 let meta = in_res.metadata();
+                if key == "swapchain" {
+                    // dbg!(meta);
+                }
                 let cache = self.transient_cache.get(&id).copied();
 
                 if cache != Some(meta) {
                     log::warn!("transient cache update!");
+                    self.updated_transients.insert(id);
                     self.transient_cache.insert(id, meta);
                 }
             } else {
@@ -827,6 +834,10 @@ impl Graph {
 
         let topo_order = self.build_topological_order()?;
 
+        /*
+        find all resources that should change/be reallocated
+        */
+
         for node in topo_order {
             // log::warn!("preparing node {:?}", node);
             self.prepare_node_meta(graph_scalar_in, node)?;
@@ -847,7 +858,6 @@ impl Graph {
         // that have filled out `resource_meta`s -- afterward, all
         // owned resources should be ready for use
 
-        // println!("{:#?}", self.socket_resources);
 
         for (res_id, res_slot) in self.resources.iter_mut().enumerate() {
             if res_slot.is_some() {
@@ -1110,6 +1120,9 @@ impl Graph {
                         if let Some(t_id) =
                             self.socket_transients.get(&(id, src_socket))
                         {
+                            if self.updated_transients.remove(t_id) {
+                                self.resources[res_id] = None;
+                            }
                             // println!(
                             //     "getting transient resource at socket {:?}.{}",
                             //     id, src_socket

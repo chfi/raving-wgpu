@@ -479,8 +479,10 @@ pub async fn run() -> anyhow::Result<()> {
                     // for some reason i get a validation error if i actually attempt
                     // to execute the first resize
                     if first_resize {
+                        dbg!();
                         first_resize = false;
                     } else {
+                        dbg!();
                         state.resize(*physical_size);
                     }
                 }
@@ -499,7 +501,8 @@ pub async fn run() -> anyhow::Result<()> {
                         HashMap::default();
 
                     {
-                        let size = dims;
+                        let w_size = window.inner_size();
+                        let size = [w_size.width, w_size.height];
                         let format = state.surface_format;
 
                         transient_res.insert(
