@@ -455,7 +455,7 @@ pub async fn run() -> anyhow::Result<()> {
     let mut graph_scalars = rhai::Map::default();
     graph_scalars.insert("dimensions".into(), rhai::Dynamic::from(dims));
 
-    let t = std::time::Instant::now();
+    let start_t = std::time::Instant::now();
 
     state.resize(winit::dpi::PhysicalSize {
         width: 800,
@@ -531,10 +531,47 @@ pub async fn run() -> anyhow::Result<()> {
                     }
 
                     {
-                        if let Some(op_state) =
-                            graph.ops.node_op_state.get_mut(&gfx_n_2)
+                        if let Some(consts) =
+                            graph.ops.node_op_state.get_mut(&gfx_n_2).and_then(
+                                |s| {
+                                    s.push_constants
+                                        .get_mut(&naga::ShaderStage::Vertex)
+                                },
+                            )
                         {
-                            log::warn!("{op_state:#?}");
+                            let x = -0.5f32;
+                            let y = -0.5;
+                            consts
+                                .write_field_bytes(
+                                    "offset",
+                                    bytemuck::cast_slice(&[x, y, 0.0, 0.0]),
+                                    // bytemuck::cast_slice(&[x, y]),
+                                )
+                                .unwrap();
+                            // log::warn!("{consts:#?}");
+                        }
+                        if let Some(consts) =
+                            graph.ops.node_op_state.get_mut(&gfx_n_2).and_then(
+                                |s| {
+                                    s.push_constants
+                                        .get_mut(&naga::ShaderStage::Fragment)
+                                },
+                            )
+                        {
+                            let t = start_t.elapsed().as_secs_f32().sin();
+                            let g: f32 = (0.5 * t) + 0.5;
+                            let r = g;
+                            let b = g;
+                            dbg!(g);
+                            let color = &[r, g, b, 1.0];
+
+                            consts
+                                .write_field_bytes(
+                                    "color",
+                                    bytemuck::cast_slice(color),
+                                )
+                                .unwrap();
+                            // log::warn!("{consts:#?}");
                         }
                     }
 

@@ -49,7 +49,6 @@ impl GroupBindings {
         state: &crate::State,
         layout: &wgpu::BindGroupLayout,
     ) {
-
         todo!();
     }
 
@@ -393,13 +392,18 @@ impl PushConstants {
     pub fn data(&self) -> &[u8] {
         self.buffer.as_slice()
     }
-    
-    pub fn to_range(&self, stages: wgpu::ShaderStages) -> PushConstantRange {
-        let size = self.buffer.len();
+
+    pub fn to_range(
+        &self,
+        offset: u32,
+        stages: wgpu::ShaderStages,
+    ) -> PushConstantRange {
+        let start = offset;
+        let end = offset + self.buffer.len() as u32;
 
         PushConstantRange {
             stages,
-            range: 0..size as u32,
+            range: start..end,
         }
     }
     // pub fn write_field_float(
@@ -424,7 +428,7 @@ impl PushConstants {
 
         self.buffer[entry.index_range()].copy_from_slice(data);
 
-        None
+        Some(())
     }
 
     pub fn from_naga_struct(

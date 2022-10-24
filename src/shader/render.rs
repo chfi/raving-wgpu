@@ -84,10 +84,16 @@ impl GraphicsPipeline {
                 (&fragment.shader.push_constants, wgpu::ShaderStages::FRAGMENT),
             ];
 
-            let ranges = stages
-                .iter()
-                .filter_map(|(p, s)| p.as_ref().map(|p| p.to_range(*s)))
-                .collect::<Vec<_>>();
+            let mut offset = 0;
+            let mut ranges = Vec::new();
+
+            for (consts, stage) in stages {
+                if let Some(consts) = consts.as_ref() {
+                    let range = consts.to_range(offset, stage);
+                    offset += range.range.end - range.range.start;
+                    ranges.push(range);
+                }
+            }
 
             let stages = [
                 vertex.shader.bind_group_layouts.as_slice(),

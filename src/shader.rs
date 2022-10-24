@@ -113,7 +113,7 @@ impl ComputeShader {
 
         let push_constant_ranges = if let Some(p) = &push_constants {
             dbg!();
-            vec![p.to_range(wgpu::ShaderStages::COMPUTE)]
+            vec![p.to_range(0, wgpu::ShaderStages::COMPUTE)]
         } else {
             dbg!();
             vec![]

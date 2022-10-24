@@ -1874,38 +1874,41 @@ pub struct NodeOpState {
 }
 
 impl NodeOpState {
-    fn get_push_constant_range(
+    fn get_push_constant_data(
         &self,
         stage: naga::ShaderStage,
-    ) -> Option<(wgpu::PushConstantRange, &[u8])> {
+    ) -> Option<&[u8]> {
         let wgpu_stage = match stage {
             naga::ShaderStage::Vertex => wgpu::ShaderStages::VERTEX,
             naga::ShaderStage::Fragment => wgpu::ShaderStages::FRAGMENT,
             naga::ShaderStage::Compute => wgpu::ShaderStages::COMPUTE,
         };
 
-        self.push_constants
-            .get(&stage)
-            .map(|c| (c.to_range(wgpu_stage), c.data()))
+        self.push_constants.get(&stage).map(|c| c.data())
     }
 
     fn set_render_push_constants(&self, pass: &mut RenderPass) {
         let mut offset = 0;
 
-        let v_range = self.get_push_constant_range(naga::ShaderStage::Vertex);
-        let f_range = self.get_push_constant_range(naga::ShaderStage::Fragment);
+        let v_data = self.get_push_constant_data(naga::ShaderStage::Vertex);
+        let f_data = self.get_push_constant_data(naga::ShaderStage::Fragment);
 
-        for (range, data) in [v_range, f_range].into_iter().filter_map(|x| x) {
-            let end = range.range.end;
-            pass.set_push_constants(wgpu::ShaderStages::VERTEX, offset, data);
-            offset = end;
+        let vert = wgpu::ShaderStages::VERTEX;
+        let frag = wgpu::ShaderStages::FRAGMENT;
+
+        for (data, stage) in [(v_data, vert), (f_data, frag)].into_iter() {
+            if let Some(data) = data {
+                let end = offset + data.len() as u32;
+                pass.set_push_constants(stage, offset, data);
+                offset = end;
+            }
         }
     }
 
     fn set_compute_push_constants(&self, pass: &mut ComputePass) {
-        let range = self.get_push_constant_range(naga::ShaderStage::Compute);
+        let data = self.get_push_constant_data(naga::ShaderStage::Compute);
 
-        if let Some((range, data)) = range {
+        if let Some(data) = data {
             pass.set_push_constants(0, data);
         }
     }
