@@ -882,7 +882,9 @@ impl Graph {
             )?;
         }
 
-        todo!();
+        let sub_ix = state.queue.submit(Some(encoder.finish()));
+
+        Ok(sub_ix)
     }
 
     pub fn add_node(&mut self, schema: NodeSchemaId) -> NodeId {
@@ -1336,7 +1338,9 @@ impl GraphOps {
                     op_state.vertex_buffers.insert(*slot, *socket);
                 }
                 SocketBinding::FragmentAttachment { location } => {
-                    // todo!();
+                    let op_state =
+                        self.node_op_state.entry(node_id).or_default();
+                    op_state.attachments.insert(*location, *socket);
                 }
             }
         }
@@ -1449,16 +1453,18 @@ impl GraphOps {
             return Ok(false);
         };
 
+        println!("op_state: {:#?}", op_state);
+
         match op_id {
             NodeOpId::Graphics(i) => {
                 log::warn!("executing graphics node");
                 let graphics = &self.graphics[*i];
 
-
                 let mut vertex_buffers = op_state
                     .vertex_buffers
                     .iter()
                     .map(|(&slot, &socket)| {
+                        log::warn!("vertex buffer slot {slot}, socket {socket}");
                         let res = resource_ctx
                             .get_resource_at_socket(node_id, socket)
                             .unwrap();
@@ -1471,12 +1477,13 @@ impl GraphOps {
                         {
                             (slot, (buffer, size, stride))
                         } else {
-                            panic!("texture was used as render attachment!");
+                            panic!("texture was used as vertex buffer!");
                         }
                     })
                     .collect::<Vec<_>>();
 
                 vertex_buffers.sort_by_key(|(a, _)| *a);
+                println!("vertex_buffers: {:#?}", vertex_buffers);
 
                 let mut attchs = op_state
                     .attachments
@@ -1511,7 +1518,6 @@ impl GraphOps {
                         )
                     })
                     .collect::<Vec<_>>();
-                    
 
                 attchs.sort_by_key(|(a, _)| *a);
                 let attchs =
@@ -1539,7 +1545,8 @@ impl GraphOps {
                         let (_, size, stride) = vertex_buffers[0].1;
 
                         // TODO: optionally set vertices/instances via NodeOpState
-                        let stride = stride.expect("vertex buffer needs stride to draw");
+                        let stride =
+                            stride.expect("vertex buffer needs stride to draw");
 
                         let count = (size / stride) as u32;
                         ((0..count), (0..1))
@@ -1745,7 +1752,7 @@ struct SocketAnnotations {
     annotations: BTreeMap<(NodeId, LocalSocketIx), (usize, rhai::Map)>,
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct NodeOpState {
     bind_groups: FxHashMap<naga::ShaderStage, Vec<wgpu::BindGroup>>,
     node_parameters: rhai::Map,

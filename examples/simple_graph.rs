@@ -347,7 +347,7 @@ pub async fn run() -> anyhow::Result<()> {
     let mut graph = Graph::new();
 
     graph.add_schemas()?;
-    
+
     let vert_src = include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/shaders/shader.vert.spv"
@@ -368,6 +368,29 @@ pub async fn run() -> anyhow::Result<()> {
     let gfx_s = NodeSchemaId(1);
     let comp_s = NodeSchemaId(2);
 
+    fn vx(p: [f32; 3], uv: [f32; 2]) -> [u8; 5 * 4] {
+        let mut buf = [0u8; 20];
+        buf[0..(3 * 4)].clone_from_slice(bytemuck::cast_slice(&p));
+        buf[(3 * 4)..].clone_from_slice(bytemuck::cast_slice(&uv));
+        buf
+    }
+
+    let vertices = vec![
+        vx([0.0, 0.0, 0.0], [0.0, 0.0]),
+        vx([0.0, 1.0, 0.0], [0.0, 1.0]),
+        vx([1.0, 0.0, 0.0], [1.0, 0.0]),
+        vx([0.0, 1.0, 0.0], [0.0, 1.0]),
+        vx([1.0, 1.0, 0.0], [1.0, 1.0]),
+        vx([1.0, 0.0, 0.0], [1.0, 0.0]),
+    ];
+
+    let vertex_buffer =
+        state.device.create_buffer_init(&BufferInitDescriptor {
+            label: Some("vertex buffer"),
+            contents: bytemuck::cast_slice(vertices.as_slice()),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+
     let mut transient_res: HashMap<String, InputResource<'_>> =
         HashMap::default();
     {
@@ -384,6 +407,15 @@ pub async fn run() -> anyhow::Result<()> {
                 sampler: None,
             },
         );
+
+        transient_res.insert(
+            "vertices".into(),
+            InputResource::Buffer {
+                size: vertex_buffer.size() as usize,
+                stride: Some(4 * 5),
+                buffer: &vertex_buffer,
+            },
+        );
     }
 
     log::warn!("updating transient cache");
@@ -393,8 +425,6 @@ pub async fn run() -> anyhow::Result<()> {
 
     let gfx_n = graph.add_node(gfx_schema);
 
-
-
     // let img_n2 = graph.add_node(img_s);
     // let gfx_n = graph.add_node(gfx_s);
     // let comp_n = graph.add_node(comp_s);
@@ -403,7 +433,8 @@ pub async fn run() -> anyhow::Result<()> {
     // graph.add_link(img_n2, 0, gfx_n, 1);
     // graph.add_link(gfx_n, 1, comp_n, 0);
 
-    graph.add_link_from_transient("swapchain", gfx_n, 0);
+    graph.add_link_from_transient("vertices", gfx_n, 0);
+    graph.add_link_from_transient("swapchain", gfx_n, 1);
 
     // graph.add_link(comp_n, 1, gfx_n, 0);
 
@@ -421,8 +452,9 @@ pub async fn run() -> anyhow::Result<()> {
 
     log::warn!("executing graph");
     let sub_index = graph.execute(&state, &transient_res, &graph_scalars)?;
+    state.device.poll(wgpu::MaintainBase::WaitForSubmissionIndex(sub_index));
 
-    // output.present();
+    output.present();
     // std::thread::sleep(std::time::Duration::from_millis(2000));
 
     Ok(())
