@@ -94,6 +94,9 @@ impl State {
             .await
             .ok_or(anyhow::anyhow!("Could not find compatible adapter"))?;
 
+        let available_features = adapter.features();
+        log::warn!("{available_features:#?}");
+
         // TODO push constants probably not supported on webgl2, so need fallback
         let features = wgpu::Features::PUSH_CONSTANTS;
 

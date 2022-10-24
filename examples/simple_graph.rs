@@ -429,6 +429,14 @@ pub async fn run() -> anyhow::Result<()> {
             usage: wgpu::BufferUsages::VERTEX,
         });
 
+    let uniform_buffer =
+        state.device.create_buffer_init(&BufferInitDescriptor {
+            label: Some("uniform buffer"),
+            contents: bytemuck::cast_slice(&[1.0f32, 0.0, 0.0, 1.0]),
+            usage: wgpu::BufferUsages::UNIFORM
+            | wgpu::BufferUsages::COPY_DST,
+        });
+
     log::warn!("updating transient cache");
 
     // let img_n1 = graph.add_node(img_s);
@@ -446,6 +454,9 @@ pub async fn run() -> anyhow::Result<()> {
 
     graph.add_link_from_transient("vertices", gfx_n, 0);
     graph.add_link_from_transient("swapchain", gfx_n, 1);
+
+    graph.add_link_from_transient("uniform", gfx_n, 2);
+    graph.add_link_from_transient("uniform", gfx_n_2, 2);
 
     graph.add_link_from_transient("vertices", gfx_n_2, 0);
     graph.add_link(gfx_n, 1, gfx_n_2, 1);
@@ -528,6 +539,15 @@ pub async fn run() -> anyhow::Result<()> {
                                 buffer: &vertex_buffer,
                             },
                         );
+
+                        transient_res.insert(
+                            "uniform".into(),
+                            InputResource::Buffer {
+                                size: uniform_buffer.size() as usize,
+                                stride: None,
+                                buffer: &uniform_buffer,
+                            },
+                        );
                     }
 
                     {
@@ -544,34 +564,9 @@ pub async fn run() -> anyhow::Result<()> {
                             consts
                                 .write_field_bytes(
                                     "offset",
-                                    bytemuck::cast_slice(&[x, y, 0.0, 0.0]),
-                                    // bytemuck::cast_slice(&[x, y]),
+                                    bytemuck::cast_slice(&[x, y]),
                                 )
                                 .unwrap();
-                            // log::warn!("{consts:#?}");
-                        }
-                        if let Some(consts) =
-                            graph.ops.node_op_state.get_mut(&gfx_n_2).and_then(
-                                |s| {
-                                    s.push_constants
-                                        .get_mut(&naga::ShaderStage::Fragment)
-                                },
-                            )
-                        {
-                            let t = start_t.elapsed().as_secs_f32().sin();
-                            let g: f32 = (0.5 * t) + 0.5;
-                            let r = g;
-                            let b = g;
-                            dbg!(g);
-                            let color = &[r, g, b, 1.0];
-
-                            consts
-                                .write_field_bytes(
-                                    "color",
-                                    bytemuck::cast_slice(color),
-                                )
-                                .unwrap();
-                            // log::warn!("{consts:#?}");
                         }
                     }
 

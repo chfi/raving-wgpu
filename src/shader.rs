@@ -76,7 +76,8 @@ impl ComputeShader {
         )?;
 
         log::error!("parsing group bindings");
-        let group_bindings = GroupBindings::from_spirv(&module)?;
+        let group_bindings =
+            GroupBindings::from_spirv(&module, wgpu::ShaderStages::COMPUTE)?;
         log::error!("group bindings: {:#?}", group_bindings);
 
         let (workgroup_size, stage) = {

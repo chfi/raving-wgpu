@@ -121,6 +121,8 @@ impl GroupBindings {
         let mut bind_group_layouts = Vec::new();
         let mut expected_group = 0;
 
+        dbg!(group_bindings);
+
         for bindings in group_bindings.iter() {
             let group_ix = bindings.group_ix;
 
@@ -154,14 +156,19 @@ impl GroupBindings {
         )
     }
 
-    pub fn from_spirv(module: &naga::Module) -> Result<Vec<Self>> {
+    pub fn from_spirv(
+        module: &naga::Module,
+        stages: wgpu::ShaderStages,
+    ) -> Result<Vec<Self>> {
         let mut result = Vec::new();
 
-        let mut shader_bindings: BTreeMap<u32, Vec<BindingDef>> =
+        let mut shader_bindings: BTreeMap<u32, Vec<(BindingDef, _)>> =
             BTreeMap::default();
 
         for (handle, var) in module.global_variables.iter() {
+            log::warn!("{var:#?}");
             if (matches!(var.space, naga::AddressSpace::Storage { .. })
+                || var.space == naga::AddressSpace::Uniform
                 || var.space == naga::AddressSpace::Handle)
                 && var.binding.is_some()
             {
@@ -177,7 +184,7 @@ impl GroupBindings {
                 shader_bindings
                     .entry(binding.group.clone())
                     .or_default()
-                    .push(binding_def);
+                    .push((binding_def, var.space));
             }
         }
 
@@ -196,12 +203,12 @@ impl GroupBindings {
                 );
             }
 
-            defs.sort_by_key(|def| def.binding.binding);
+            defs.sort_by_key(|(def, space)| def.binding.binding);
             final_bindings.push(defs.clone());
 
             let mut entries: Vec<wgpu::BindGroupLayoutEntry> = Vec::new();
 
-            for (binding_ix, def) in defs.iter().enumerate() {
+            for (binding_ix, (def, space)) in defs.iter().enumerate() {
                 if binding_ix as u32 != def.binding.binding
                     || expected_group != def.binding.group
                 {
@@ -311,10 +318,21 @@ impl GroupBindings {
                         }
                     }
                     naga::TypeInner::Struct { members, span } => {
+                        use naga::AddressSpace as Space;
+
+                        let binding_ty =
+                            if let Space::Storage { access } = space {
+                                let read_only = !access
+                                    .contains(naga::StorageAccess::STORE);
+                                wgpu::BufferBindingType::Storage { read_only }
+                            } else if let Space::Uniform = space {
+                                wgpu::BufferBindingType::Uniform
+                            } else {
+                                unreachable!();
+                            };
+
                         let ty = wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage {
-                                read_only: false,
-                            },
+                            ty: binding_ty,
                             has_dynamic_offset: false,
                             min_binding_size: None,
                         };
@@ -338,7 +356,7 @@ impl GroupBindings {
 
                 let entry = wgpu::BindGroupLayoutEntry {
                     binding: def.binding.binding,
-                    visibility: wgpu::ShaderStages::COMPUTE,
+                    visibility: stages,
                     ty,
                     count,
                 };
@@ -348,11 +366,13 @@ impl GroupBindings {
 
             log::error!("group {} - {:?}", group_ix, entries);
 
+            let bindings = defs.into_iter().map(|(g,_)| g).collect();
+
             result.push(GroupBindings {
                 group_ix,
                 // layout: bind_group_layout,
                 entries,
-                bindings: defs,
+                bindings,
             });
 
             expected_group += 1;
@@ -400,6 +420,7 @@ impl PushConstants {
     ) -> PushConstantRange {
         let start = offset;
         let end = offset + self.buffer.len() as u32;
+        dbg!((stages, start..end));
 
         PushConstantRange {
             stages,

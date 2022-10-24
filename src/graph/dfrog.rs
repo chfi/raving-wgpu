@@ -1777,7 +1777,8 @@ impl GraphOps {
         let mut socket_names = Vec::new();
         let mut socket_bindings = Vec::new();
 
-        // add vertex shader sockets
+        // add vertex and fragment shader sockets
+
         //   vertex buffers
         // hardcoded to a single vertex buffer
         socket_bindings.push((
@@ -1786,7 +1787,18 @@ impl GraphOps {
         ));
         socket_names.push("vertex_in".into());
 
-        //   bind groups
+
+        //   render attachments
+        for output in frag.fragment_outputs.iter() {
+            socket_bindings.push((
+                socket_names.len(),
+                SocketBinding::FragmentAttachment {
+                    location: output.location,
+                },
+            ));
+            socket_names.push(output.name.as_str().into());
+        }
+        // vertex bind groups
         for group in vert.group_bindings.iter() {
             for binding in group.bindings.iter() {
                 let ix = socket_names.len();
@@ -1801,19 +1813,7 @@ impl GraphOps {
             }
         }
 
-        // add fragment shader sockets
-        //   render attachments
-        for output in frag.fragment_outputs.iter() {
-            socket_bindings.push((
-                socket_names.len(),
-                SocketBinding::FragmentAttachment {
-                    location: output.location,
-                },
-            ));
-            socket_names.push(output.name.as_str().into());
-        }
-
-        //   bind groups
+        // fragment bind groups
         for group in frag.group_bindings.iter() {
             for binding in group.bindings.iter() {
                 let ix = socket_names.len();
@@ -1878,12 +1878,6 @@ impl NodeOpState {
         &self,
         stage: naga::ShaderStage,
     ) -> Option<&[u8]> {
-        let wgpu_stage = match stage {
-            naga::ShaderStage::Vertex => wgpu::ShaderStages::VERTEX,
-            naga::ShaderStage::Fragment => wgpu::ShaderStages::FRAGMENT,
-            naga::ShaderStage::Compute => wgpu::ShaderStages::COMPUTE,
-        };
-
         self.push_constants.get(&stage).map(|c| c.data())
     }
 
@@ -1897,8 +1891,10 @@ impl NodeOpState {
         let frag = wgpu::ShaderStages::FRAGMENT;
 
         for (data, stage) in [(v_data, vert), (f_data, frag)].into_iter() {
+        // for (data, stage) in [(f_data, frag), (v_data, vert)].into_iter() {
             if let Some(data) = data {
                 let end = offset + data.len() as u32;
+                // dbg!(stage, offset..end);
                 pass.set_push_constants(stage, offset, data);
                 offset = end;
             }

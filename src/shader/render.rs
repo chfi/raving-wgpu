@@ -39,12 +39,8 @@ impl GraphicsPipeline {
     }
     */
 
-    pub fn create_bind_groups(&self,
-        state: &crate::State,
-
-    ) {
+    pub fn create_bind_groups(&self, state: &crate::State) {
         todo!();
-
     }
 
     pub fn new(
@@ -54,7 +50,6 @@ impl GraphicsPipeline {
     ) -> Result<Self> {
         let vertex_buffers = vertex.create_buffer_layouts();
         let vertex_state = vertex.create_vertex_state(&vertex_buffers);
-
 
         let mut color_targets = Vec::new();
         let fragment_state = {
@@ -81,7 +76,10 @@ impl GraphicsPipeline {
         let pipeline_layout = {
             let stages = [
                 (&vertex.shader.push_constants, wgpu::ShaderStages::VERTEX),
-                (&fragment.shader.push_constants, wgpu::ShaderStages::FRAGMENT),
+                (
+                    &fragment.shader.push_constants,
+                    wgpu::ShaderStages::FRAGMENT,
+                ),
             ];
 
             let mut offset = 0;
@@ -90,6 +88,7 @@ impl GraphicsPipeline {
             for (consts, stage) in stages {
                 if let Some(consts) = consts.as_ref() {
                     let range = consts.to_range(offset, stage);
+                    dbg!(stage, offset, &range.range);
                     offset += range.range.end - range.range.start;
                     ranges.push(range);
                 }
@@ -100,7 +99,11 @@ impl GraphicsPipeline {
                 fragment.shader.bind_group_layouts.as_slice(),
             ];
 
-            let layouts = stages.into_iter().flatten().collect::<Vec<_>>();
+            let layouts = stages
+                .into_iter()
+                .filter(|s| !s.is_empty())
+                .flatten()
+                .collect::<Vec<_>>();
 
             let desc = wgpu::PipelineLayoutDescriptor {
                 label: None,
@@ -160,7 +163,6 @@ impl GraphicsPipeline {
 pub struct VertexShaderInstance {
     pub(crate) shader: Arc<VertexShader>,
     // pub push_constants: Option<PushConstants>,
-
     pub vertex_step_modes: Vec<wgpu::VertexStepMode>,
     pub vertex_buffer_strides: Vec<u64>,
     pub vertex_buffer_layouts: Vec<Vec<wgpu::VertexAttribute>>,
@@ -233,7 +235,6 @@ pub struct FragmentShaderInstance {
 
     attachment_formats: Vec<wgpu::TextureFormat>,
     depth_format: Option<wgpu::TextureFormat>,
-
     // pub push_constants: Option<interface::PushConstants>,
 }
 
@@ -255,7 +256,7 @@ impl FragmentShaderInstance {
 
             let sizes = output.sizes;
         }
-        
+
         let attachment_formats: Vec<_> = attch_formats
             .iter()
             .map(|fmt| {
@@ -264,13 +265,11 @@ impl FragmentShaderInstance {
             .collect();
         */
 
-
         let result = Self {
             shader: shader.clone(),
 
             attachment_formats: attchs,
             depth_format: None,
-
             // push_constants: shader.push_constants.clone(),
         };
 
@@ -342,7 +341,8 @@ impl VertexShader {
                 anyhow::anyhow!("Entry point not found: `{}`", entry_point)
             })?;
 
-        let group_bindings = GroupBindings::from_spirv(&naga_mod)?;
+        let group_bindings =
+            GroupBindings::from_spirv(&naga_mod, wgpu::ShaderStages::VERTEX)?;
 
         let push_constants = naga_mod
             .global_variables
@@ -468,7 +468,8 @@ impl FragmentShader {
                 anyhow::anyhow!("Entry point not found: `{}`", entry_point)
             })?;
 
-        let group_bindings = GroupBindings::from_spirv(&naga_mod)?;
+        let group_bindings =
+            GroupBindings::from_spirv(&naga_mod, wgpu::ShaderStages::FRAGMENT)?;
 
         let push_constants = naga_mod
             .global_variables
