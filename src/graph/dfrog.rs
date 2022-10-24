@@ -79,20 +79,48 @@ pub struct NodeSchema {
     node_type: NodeType,
     schema_id: NodeSchemaId,
 
-    socket_names: Vec<rhai::ImmutableString>,
+    pub socket_names: Vec<rhai::ImmutableString>,
 
-    source_sockets: Vec<(LocalSocketIx, DataType)>,
-    source_rules_sockets: Vec<(LocalSocketIx, SocketMetadataSource)>,
-    source_rules_scalars: Vec<(LocalSocketIx, rhai::ImmutableString)>,
+    pub source_sockets: Vec<(LocalSocketIx, DataType)>,
+    pub source_rules_sockets: Vec<(LocalSocketIx, SocketMetadataSource)>,
+    pub source_rules_scalars: Vec<(LocalSocketIx, rhai::ImmutableString)>,
     // source_rules_scalars: Vec<(LocalSocketIx, Vec<rhai::ImmutableString>)>,
-    default_sources: FxHashMap<LocalSocketIx, ResourceMeta>,
+    pub default_sources: FxHashMap<LocalSocketIx, ResourceMeta>,
 
-    socket_bindings: Vec<(LocalSocketIx, SocketBinding)>,
+    pub socket_bindings: Vec<(LocalSocketIx, SocketBinding)>,
     // binding_socket: Vec<((wgpu::ShaderStages, (u32, u32)), LocalSocketIx)>,
-    create_source_metadata: FxHashMap<
+    pub create_source_metadata: FxHashMap<
         LocalSocketIx,
         Arc<dyn Fn(&rhai::Map, Option<ResourceMeta>) -> Result<ResourceMeta>>,
     >,
+}
+
+impl NodeSchema {
+    pub fn new_with<'a, F>(node_type: NodeType,
+        schema_id: NodeSchemaId,
+        socket_names: impl IntoIterator<Item = &'a str>,
+        f: F
+    ) -> Self
+    where F: FnOnce(&mut NodeSchema) {
+
+        let mut schema = NodeSchema {
+            node_type,
+            schema_id,
+            socket_names: socket_names.into_iter().map(|s| s.into()).collect(),
+
+            source_sockets: vec![],
+            source_rules_sockets: vec![],
+            source_rules_scalars: vec![],
+            socket_bindings: vec![],
+
+            default_sources: FxHashMap::default(),
+            create_source_metadata: FxHashMap::default(),
+        };
+
+        f(&mut schema);
+
+        schema
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -352,7 +380,8 @@ impl ResourceMeta {
             } => {
                 if size.is_none() || usage.is_none() {
                     anyhow::bail!(
-                        "Can't allocate buffer without known size and usage"
+                        "Can't allocate buffer without known size \
+                         (was {size:?}) and usage (was {usage:?})"
                     );
                 }
 
@@ -375,7 +404,10 @@ impl ResourceMeta {
                     dbg!(size);
                     dbg!(format);
                     dbg!(usage);
-                    anyhow::bail!("Can't allocate image without known size, format, and usage");
+                    anyhow::bail!("Can't allocate image without \
+                    known size (was {size:?}), \
+                    format (was {format:?}), \
+                    and usage (was {usage:?})");
                 }
 
                 let [width, height] = size.unwrap();
@@ -582,6 +614,36 @@ impl Graph {
         self.schemas.push(schema);
 
         Ok(schema_id)
+    }
+
+    pub fn add_compute_schema(
+        &mut self,
+        state: &State,
+        comp_src: &[u8],
+    ) -> Result<NodeSchemaId> {
+        let schema_id = NodeSchemaId(self.schemas.len());
+        let schema = self.ops.create_compute_schema(
+            state,
+            comp_src,
+            schema_id,
+        )?;
+        self.schemas.push(schema);
+
+        Ok(schema_id)
+    }
+
+    pub fn add_custom_schema<'a, F>(
+        &mut self,
+        socket_names: impl IntoIterator<Item = &'a str>,
+        // state: &State,
+        f: F,
+    ) -> NodeSchemaId 
+    where F: FnOnce(&mut NodeSchema)
+    {
+        let schema_id = NodeSchemaId(self.schemas.len());
+        let schema = NodeSchema::new_with(NodeType::Resource, schema_id, socket_names, f);
+        self.schemas.push(schema);
+        schema_id
     }
 
     pub fn update_transient_cache<'a>(
@@ -799,7 +861,7 @@ impl Graph {
             match meta.allocate(state) {
                 Ok(res) => *res_slot = Some(res),
                 Err(e) => {
-                    panic!("error allocating image for resource {res_id}");
+                    panic!("error allocating image for resource {res_id}: {:?}", e);
                 }
             }
             *res_slot = Some(meta.allocate(state)?);
@@ -829,6 +891,7 @@ impl Graph {
             owned_resources: &self.resources,
             resource_metadata: &self.resource_meta,
             transient_resource: &transient_res_ids,
+            graph_scalars: graph_scalar_in,
         };
 
         // walk the graph in execution order, recording the node commands
@@ -1247,6 +1310,7 @@ pub struct ResourceCtx<'a> {
     owned_resources: &'a [Option<Resource>],
     resource_metadata: &'a [ResourceMeta],
     transient_resource: &'a FxHashMap<TransientId, &'a InputResource<'a>>,
+    graph_scalars: &'a rhai::Map,
 }
 
 pub struct NodeCtx<'a> {
@@ -1352,15 +1416,9 @@ impl GraphOps {
             LocalSocketIx,
         >|
          -> Result<Vec<wgpu::BindGroup>> {
-            //  entries: &[Vec<BindGroupEntry>]| {
-            // let vert_groups = &pipeline.vertex.shader.group_bindings;
 
             let group_entries = create_bind_group_entries(
                 resource_ctx,
-                // socket_res_refs,
-                // owned_res,
-                // res_meta,
-                // transient_res,
                 bind_sockets,
                 group_bindings,
                 node_id,
@@ -1418,6 +1476,9 @@ impl GraphOps {
                 op_state
                     .bind_groups
                     .insert(naga::ShaderStage::Compute, comp_groups);
+
+                // TODO how to compute workgroup count
+                op_state.workgroup_count = Some([1, 1, 1]);
             }
             NodeOpId::NoOp => unreachable!(),
         }
@@ -1429,10 +1490,6 @@ impl GraphOps {
         &self,
         state: &State,
         resource_ctx: &'a ResourceCtx<'a>,
-        // socket_res_refs: &'a BTreeMap<(NodeId, LocalSocketIx), ResourceRef>,
-        // owned_res: &'a [Option<Resource>],
-        // res_meta: &[ResourceMeta],
-        // transient_res: &'a FxHashMap<TransientId, &'a InputResource<'a>>,
         schema: &NodeSchema,
         node_id: NodeId,
         encoder: &mut CommandEncoder,
@@ -1553,7 +1610,6 @@ impl GraphOps {
                     };
 
                     pass.draw(vertices, instances);
-                    // pass.draw(0..6, 0..1);
                 }
             }
             NodeOpId::Compute(i) => {

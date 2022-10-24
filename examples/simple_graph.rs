@@ -3,6 +3,8 @@ use std::{collections::HashMap, sync::atomic::AtomicBool};
 use std::sync::Arc;
 
 use anyhow::Result;
+use raving_wgpu::dfrog::{ResourceMeta, SocketMetadataSource};
+use raving_wgpu::DataType;
 use raving_wgpu::{
     shader::render::{
         FragmentShader, FragmentShaderInstance, GraphicsPipeline, VertexShader,
@@ -364,6 +366,38 @@ pub async fn run() -> anyhow::Result<()> {
         &[state.surface_format],
     )?;
 
+    let comp_src = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/shaders/shader.comp.spv"
+    ));
+
+    // let comp_schema = graph.add_
+
+    let help_s = graph.add_custom_schema(["input", "output"], |schema| {
+        //
+        schema.source_sockets.push((1, DataType::Texture));
+
+        use wgpu::TextureUsages as Usage;
+
+        schema.default_sources.insert(
+            1,
+            ResourceMeta::Texture {
+                size: None,
+                format: Some(wgpu::TextureFormat::Rgba8Unorm),
+                usage: Some(Usage::STORAGE_BINDING | Usage::COPY_SRC),
+            },
+        );
+
+        use SocketMetadataSource as Rule;
+
+        schema.source_rules_sockets.push((1, Rule::texture_size(0)));
+
+        // schema.source_rules_sockets
+        //     .push(1, Rule::texture_format(0));
+        // schema.source_rules_sockets
+        //     .push(1, Rule::text
+    });
+
     let img_s = NodeSchemaId(0);
     let gfx_s = NodeSchemaId(1);
     let comp_s = NodeSchemaId(2);
@@ -425,13 +459,13 @@ pub async fn run() -> anyhow::Result<()> {
 
     let gfx_n = graph.add_node(gfx_schema);
 
-    // let img_n2 = graph.add_node(img_s);
-    // let gfx_n = graph.add_node(gfx_s);
-    // let comp_n = graph.add_node(comp_s);
+    let help_n = graph.add_node(help_s);
 
     // graph.add_link(img_n1, 0, gfx_n, 0);
     // graph.add_link(img_n2, 0, gfx_n, 1);
     // graph.add_link(gfx_n, 1, comp_n, 0);
+
+    graph.add_link_from_transient("swapchain", help_n, 0);
 
     graph.add_link_from_transient("vertices", gfx_n, 0);
     graph.add_link_from_transient("swapchain", gfx_n, 1);
@@ -452,10 +486,11 @@ pub async fn run() -> anyhow::Result<()> {
 
     log::warn!("executing graph");
     let sub_index = graph.execute(&state, &transient_res, &graph_scalars)?;
-    state.device.poll(wgpu::MaintainBase::WaitForSubmissionIndex(sub_index));
+    state
+        .device
+        .poll(wgpu::MaintainBase::WaitForSubmissionIndex(sub_index));
 
     output.present();
-    // std::thread::sleep(std::time::Duration::from_millis(2000));
 
     Ok(())
 }
