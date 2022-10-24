@@ -16,6 +16,10 @@ use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
     BufferUsages, Extent3d, ImageCopyTexture, Origin3d,
 };
+use winit::event::{
+    ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent,
+};
+use winit::event_loop::ControlFlow;
 
 pub async fn run_compute() -> anyhow::Result<()> {
     let (event_loop, window, mut state) = raving_wgpu::initialize().await?;
@@ -371,10 +375,17 @@ pub async fn run() -> anyhow::Result<()> {
         "/shaders/shader.comp.spv"
     ));
 
-    // let comp_schema = graph.add_
-
     let help_s = graph.add_custom_schema(["input", "output"], |schema| {
-        //
+        /*
+        This adds a custom resource node, with pretty minimal boilerplate,
+        that creates an image of a given format and usage, with the
+        size taken from an input image.
+
+        The input image data is never actually used, since this node
+        doesn't do anything other than allocate the resource for
+        its second node.
+        */
+
         schema.source_sockets.push((1, DataType::Texture));
 
         use wgpu::TextureUsages as Usage;
@@ -391,11 +402,6 @@ pub async fn run() -> anyhow::Result<()> {
         use SocketMetadataSource as Rule;
 
         schema.source_rules_sockets.push((1, Rule::texture_size(0)));
-
-        // schema.source_rules_sockets
-        //     .push(1, Rule::texture_format(0));
-        // schema.source_rules_sockets
-        //     .push(1, Rule::text
     });
 
     let img_s = NodeSchemaId(0);
@@ -425,39 +431,12 @@ pub async fn run() -> anyhow::Result<()> {
             usage: wgpu::BufferUsages::VERTEX,
         });
 
-    let mut transient_res: HashMap<String, InputResource<'_>> =
-        HashMap::default();
-    {
-        let size = dims;
-        let format = state.surface_format;
-
-        transient_res.insert(
-            "swapchain".into(),
-            InputResource::Texture {
-                size,
-                format,
-                texture: None,
-                view: Some(&output_view),
-                sampler: None,
-            },
-        );
-
-        transient_res.insert(
-            "vertices".into(),
-            InputResource::Buffer {
-                size: vertex_buffer.size() as usize,
-                stride: Some(4 * 5),
-                buffer: &vertex_buffer,
-            },
-        );
-    }
-
     log::warn!("updating transient cache");
-    graph.update_transient_cache(&transient_res);
 
     // let img_n1 = graph.add_node(img_s);
 
     let gfx_n = graph.add_node(gfx_schema);
+    let gfx_n_2 = graph.add_node(gfx_schema);
 
     let help_n = graph.add_node(help_s);
 
@@ -470,11 +449,15 @@ pub async fn run() -> anyhow::Result<()> {
     graph.add_link_from_transient("vertices", gfx_n, 0);
     graph.add_link_from_transient("swapchain", gfx_n, 1);
 
+    graph.add_link_from_transient("vertices", gfx_n_2, 0);
+    graph.add_link(gfx_n, 1, gfx_n_2, 1);
+
     // graph.add_link(comp_n, 1, gfx_n, 0);
 
     let mut graph_scalars = rhai::Map::default();
     graph_scalars.insert("dimensions".into(), rhai::Dynamic::from(dims));
 
+    /*
     log::warn!("validating graph");
     let valid = graph.validate(&transient_res, &graph_scalars)?;
 
@@ -491,8 +474,118 @@ pub async fn run() -> anyhow::Result<()> {
         .poll(wgpu::MaintainBase::WaitForSubmissionIndex(sub_index));
 
     output.present();
+    */
 
-    Ok(())
+    event_loop.run(move |event, _, control_flow| {
+        match event {
+            Event::WindowEvent {
+                ref event,
+                window_id,
+            } if window_id == window.id() => match event {
+                WindowEvent::CloseRequested
+                | WindowEvent::KeyboardInput {
+                    input:
+                        KeyboardInput {
+                            state: ElementState::Pressed,
+                            virtual_keycode: Some(VirtualKeyCode::Escape),
+                            ..
+                        },
+                    ..
+                } => *control_flow = ControlFlow::Exit,
+                WindowEvent::Resized(physical_size) => {
+                    state.resize(*physical_size);
+                }
+                WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
+                    state.resize(**new_inner_size);
+                }
+                _ => {}
+            },
+            Event::RedrawRequested(window_id) if window_id == window.id() => {
+                if let Ok(output) = state.surface.get_current_texture() {
+                    let output_view = output
+                        .texture
+                        .create_view(&wgpu::TextureViewDescriptor::default());
+
+                    let mut transient_res: HashMap<String, InputResource<'_>> =
+                        HashMap::default();
+
+                    {
+                        let size = dims;
+                        let format = state.surface_format;
+
+                        transient_res.insert(
+                            "swapchain".into(),
+                            InputResource::Texture {
+                                size,
+                                format,
+                                texture: None,
+                                view: Some(&output_view),
+                                sampler: None,
+                            },
+                        );
+
+                        transient_res.insert(
+                            "vertices".into(),
+                            InputResource::Buffer {
+                                size: vertex_buffer.size() as usize,
+                                stride: Some(4 * 5),
+                                buffer: &vertex_buffer,
+                            },
+                        );
+                    }
+
+                    graph.update_transient_cache(&transient_res);
+                    log::warn!("validating graph");
+                    let valid =
+                        graph.validate(&transient_res, &graph_scalars).unwrap();
+
+                    if valid {
+                        println!("validation successful");
+                    } else {
+                        log::error!("graph validation error");
+                    }
+
+                    log::warn!("executing graph");
+                    let sub_index = graph
+                        .execute(&state, &transient_res, &graph_scalars)
+                        .unwrap();
+                    state.device.poll(
+                        wgpu::MaintainBase::WaitForSubmissionIndex(sub_index),
+                    );
+
+                    output.present();
+                } else {
+                    state.resize(state.size);
+                }
+
+                // state.update();
+                /*
+                match state.render() {
+                    Ok(_) => {}
+                    // Reconfigure the surface if it's lost or outdated
+                    Err(
+                        wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated,
+                    ) => state.resize(state.size),
+                    // The system is out of memory, we should probably quit
+                    Err(wgpu::SurfaceError::OutOfMemory) => {
+                        *control_flow = ControlFlow::Exit
+                    }
+                    // We're ignoring timeouts
+                    Err(wgpu::SurfaceError::Timeout) => {
+                        log::warn!("Surface timeout")
+                    }
+                }
+                 */
+            }
+            Event::MainEventsCleared => {
+                // RedrawRequested will only trigger once, unless we manually
+                // request it.
+                window.request_redraw();
+            }
+
+            _ => {}
+        }
+    })
 }
 
 pub fn main() {

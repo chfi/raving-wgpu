@@ -72,8 +72,8 @@ pub struct State {
     pub surface: wgpu::Surface,
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
-    pub(crate) config: wgpu::SurfaceConfiguration,
-    pub(crate) size: winit::dpi::PhysicalSize<u32>,
+    pub config: wgpu::SurfaceConfiguration,
+    pub size: winit::dpi::PhysicalSize<u32>,
 
     pub surface_format: wgpu::TextureFormat,
 }
@@ -147,18 +147,6 @@ impl State {
             self.config.height = new_size.height;
             self.surface.configure(&self.device, &self.config);
         }
-    }
-
-    pub fn input(&mut self, event: &WindowEvent) -> bool {
-        false
-    }
-
-    pub fn update(&mut self) {
-        todo!()
-    }
-
-    pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
-        todo!()
     }
 }
 
