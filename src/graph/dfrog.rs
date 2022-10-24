@@ -1,13 +1,10 @@
-use std::{
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
-    path::PathBuf,
-};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use datafrog::{Iteration, Relation, RelationLeaper, Variable};
+use datafrog::Relation;
 use rustc_hash::{FxHashMap, FxHashSet};
 use wgpu::{
-    BindGroupEntry, BindingResource, BindingType, CommandEncoder,
-    SubmissionIndex, TextureUsages,
+    BindingResource, BindingType, CommandEncoder, SubmissionIndex,
+    TextureUsages,
 };
 
 use std::sync::Arc;
@@ -76,7 +73,7 @@ impl SocketBinding {
 
 #[derive(Clone)]
 pub struct NodeSchema {
-    node_type: NodeType,
+    pub node_type: NodeType,
     schema_id: NodeSchemaId,
 
     pub socket_names: Vec<rhai::ImmutableString>,
@@ -235,11 +232,7 @@ impl ResourceRef {
                 match (res, *meta) {
                     (
                         Resource::Buffer(buffer),
-                        ResourceMeta::Buffer {
-                            size,
-                            usage,
-                            stride,
-                        },
+                        ResourceMeta::Buffer { size, stride, .. },
                     ) => Some(InputResource::Buffer {
                         size: size?,
                         stride,
@@ -247,11 +240,7 @@ impl ResourceRef {
                     }),
                     (
                         Resource::Texture(texture),
-                        ResourceMeta::Texture {
-                            size,
-                            format,
-                            usage,
-                        },
+                        ResourceMeta::Texture { size, format, .. },
                     ) => Some(InputResource::Texture {
                         size: size?,
                         format: format?,
@@ -311,12 +300,14 @@ impl ResourceMeta {
         &mut self,
         other_res: &ResourceMeta,
         rule: ResourceMetadataEntry,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         if (self.is_buffer() && rule.is_texture())
             || (self.is_texture() && rule.is_buffer())
         {
             anyhow::bail!("Rule did not match resource type");
         }
+
+        let mut changed = false;
 
         if let ResourceMeta::Buffer { size, usage, .. } = self {
             if other_res.is_texture() {
@@ -331,9 +322,11 @@ impl ResourceMeta {
             {
                 match rule {
                     ResourceMetadataEntry::BufferSize => {
+                        changed |= size != other_size;
                         *size = *other_size;
                     }
                     ResourceMetadataEntry::BufferUsage => {
+                        changed |= usage != other_usage;
                         *usage = *other_usage;
                     }
 
@@ -350,36 +343,35 @@ impl ResourceMeta {
                 anyhow::bail!("Source resource did not match self");
             }
             if let ResourceMeta::Texture {
-                size: o_size,
-                format: o_format,
-                usage: o_usage,
+                size: other_size,
+                format: other_format,
+                usage: other_usage,
             } = other_res
             {
                 match rule {
                     ResourceMetadataEntry::TextureSize => {
-                        *size = *o_size;
+                        changed |= size != other_size;
+                        *size = *other_size;
                     }
                     ResourceMetadataEntry::TextureFormat => {
-                        *format = *o_format;
+                        changed |= format != other_format;
+                        *format = *other_format;
                     }
                     ResourceMetadataEntry::TextureUsage => {
-                        *usage = *o_usage;
+                        changed |= usage != other_usage;
+                        *usage = *other_usage;
                     }
                     _ => (),
                 }
             }
         }
 
-        Ok(())
+        Ok(changed)
     }
 
     pub fn allocate(&self, state: &State) -> Result<Resource> {
         match self {
-            ResourceMeta::Buffer {
-                size,
-                usage,
-                stride,
-            } => {
+            ResourceMeta::Buffer { size, usage, .. } => {
                 if size.is_none() || usage.is_none() {
                     anyhow::bail!(
                         "Can't allocate buffer without known size \
@@ -463,7 +455,7 @@ pub struct Graph {
 
     nodes: Vec<Node>,
     // nodes: Vec<NodeId>,
-    node_names: FxHashMap<NodeId, rhai::ImmutableString>,
+    pub node_names: FxHashMap<NodeId, rhai::ImmutableString>,
 
     // these are populated by the links, resource origins, and transients
     socket_resources: BTreeMap<(NodeId, LocalSocketIx), ResourceId>,
@@ -512,13 +504,7 @@ impl<'a> InputResource<'a> {
         entry: &wgpu::BindGroupLayoutEntry,
     ) -> Result<wgpu::BindGroupEntry<'a>> {
         let binding_resource = match self {
-            InputResource::Texture {
-                size,
-                format,
-                sampler,
-                texture,
-                view,
-            } => match entry.ty {
+            InputResource::Texture { sampler, view, .. } => match entry.ty {
                 BindingType::Sampler(_) => {
                     BindingResource::Sampler(&sampler.as_ref().unwrap())
                 }
@@ -530,11 +516,7 @@ impl<'a> InputResource<'a> {
                     panic!("TODO: Binding type mismatch!");
                 }
             },
-            InputResource::Buffer {
-                size,
-                stride,
-                buffer,
-            } => match entry.ty {
+            InputResource::Buffer { buffer, .. } => match entry.ty {
                 BindingType::Buffer { .. } => {
                     BindingResource::Buffer(buffer.as_entire_buffer_binding())
                 }
@@ -634,6 +616,25 @@ impl Graph {
         Ok(schema_id)
     }
 
+    pub fn add_custom_compute_schema<'a, F>(
+        &mut self,
+        state: &State,
+        comp_src: &[u8],
+        f: F,
+    ) -> Result<NodeSchemaId> 
+    where
+        F: FnOnce(&mut NodeSchema),
+    {
+        let schema_id = NodeSchemaId(self.schemas.len());
+        let mut schema =
+            self.ops.create_compute_schema(state, comp_src, schema_id)?;
+
+        f(&mut schema);
+        self.schemas.push(schema);
+
+        Ok(schema_id)
+    }
+
     pub fn add_custom_schema<'a, F>(
         &mut self,
         socket_names: impl IntoIterator<Item = &'a str>,
@@ -662,13 +663,9 @@ impl Graph {
             if let Some(id) = self.transient_cache_id.get(key.as_str()).copied()
             {
                 let meta = in_res.metadata();
-                if key == "swapchain" {
-                    // dbg!(meta);
-                }
                 let cache = self.transient_cache.get(&id).copied();
 
                 if cache != Some(meta) {
-                    log::warn!("transient cache update!");
                     self.updated_transients.insert(id);
                     self.transient_cache.insert(id, meta);
                 }
@@ -728,24 +725,7 @@ impl Graph {
             }
         }
 
-        // println!("socket_origins: {:?}", socket_origins);
-
         // now, build the relations for the datafrog programs
-
-        // node(node_id, schema_id).
-        let nodes = Relation::from_iter(
-            self.nodes
-                .iter()
-                .enumerate()
-                .map(|(ix, node)| (NodeId::from(ix), node.schema)),
-        );
-
-        // resource ID for each socket; empty if uninitialized
-        // socket_resource(socket_ix, res_id)
-        let existing_socket_resources = Relation::from_iter(
-            self.socket_resources.iter().map(|(&k, &v)| (k, v)),
-        );
-
         let links = Relation::from_iter(
             self.nodes.iter().enumerate().flat_map(|(ix, node)| {
                 let node_id = NodeId::from(ix);
@@ -755,7 +735,7 @@ impl Graph {
             }),
         );
 
-        let inv_links = Relation::from_map(&links, |&(from, to)| (to, from));
+        // let inv_links = Relation::from_map(&links, |&(from, to)| (to, from));
 
         // socket_origins((node_id, socket_ix), res_id).
         let socket_origins = Relation::from_iter(socket_origins);
@@ -843,7 +823,6 @@ impl Graph {
             self.prepare_node_meta(graph_scalar_in, node)?;
         }
 
-
         Ok(true)
     }
 
@@ -857,11 +836,8 @@ impl Graph {
         // iterate through all resources, allocating all `None` resources
         // that have filled out `resource_meta`s -- afterward, all
         // owned resources should be ready for use
-
-
         for (res_id, res_slot) in self.resources.iter_mut().enumerate() {
             if res_slot.is_some() {
-                // TODO reallocate if necessary
                 continue;
             }
 
@@ -870,7 +846,6 @@ impl Graph {
 
             match meta.allocate(state) {
                 Ok(res) => {
-                    log::warn!("reallocating resource in slot {res_id}");
                     *res_slot = Some(res);
                 }
                 Err(e) => {
@@ -923,21 +898,6 @@ impl Graph {
                 .preprocess_node(state, &resource_ctx, schema, *node_id)?;
         }
 
-        for (ix, node) in self.nodes.iter().enumerate() {
-            let node_id = NodeId::from(0);
-
-            if let Some(op_state) = self.ops.node_op_state.get(&node_id) {
-                // println!(
-                //     "node {}\tbind group count: {}\t\
-                //      node_parameters: {:?}\tworkgroup_count: {:?}",
-                //     ix,
-                //     op_state.bind_groups.len(),
-                //     op_state.node_parameters,
-                //     op_state.workgroup_count
-                // );
-            }
-        }
-
         // submit the commands to the GPU queue and return the submission index
 
         let mut encoder = state.device.create_command_encoder(
@@ -953,7 +913,6 @@ impl Graph {
             let schema = &self.schemas[node.schema.0];
 
             self.ops.execute_node(
-                state,
                 &resource_ctx,
                 schema,
                 *node_id,
@@ -996,7 +955,8 @@ impl Graph {
         dst: NodeId,
         dst_socket: LocalSocketIx,
     ) -> Option<()> {
-        self.transient_links.insert((dst, dst_socket), transient_key.into());
+        self.transient_links
+            .insert((dst, dst_socket), transient_key.into());
 
         Some(())
     }
@@ -1012,7 +972,7 @@ impl Graph {
         for (ix, node) in self.nodes.iter().enumerate() {
             let from_id = NodeId::from(ix);
 
-            for &(out_ix, (to_id, in_ix)) in node.links.iter() {
+            for &(_out_ix, (to_id, _in_ix)) in node.links.iter() {
                 incoming_links.entry(to_id).or_default().insert(from_id);
             }
         }
@@ -1021,7 +981,7 @@ impl Graph {
             .nodes
             .iter()
             .enumerate()
-            .filter_map(|(ix, node)| {
+            .filter_map(|(ix, _node)| {
                 let id = NodeId::from(ix);
                 (!incoming_links.contains_key(&id)).then_some(id)
             })
@@ -1039,7 +999,7 @@ impl Graph {
                 insert m into S
             */
 
-            for (out_ix, (to_id, in_ix)) in node.links.iter() {
+            for (_out_ix, (to_id, _in_ix)) in node.links.iter() {
                 let mut remove_set = false;
                 if let Some(incoming) = incoming_links.get_mut(&to_id) {
                     incoming.remove(&n);
@@ -1120,9 +1080,6 @@ impl Graph {
                         if let Some(t_id) =
                             self.socket_transients.get(&(id, src_socket))
                         {
-                            if self.updated_transients.remove(t_id) {
-                                self.resources[res_id] = None;
-                            }
                             // println!(
                             //     "getting transient resource at socket {:?}.{}",
                             //     id, src_socket
@@ -1140,7 +1097,12 @@ impl Graph {
                             &self.resource_meta[*res_id]
                         }
                     };
-                    meta.apply_socket_rule(src_meta, source.entry)?;
+                    let changed =
+                        meta.apply_socket_rule(src_meta, source.entry)?;
+
+                    if changed {
+                        self.resources[res_id] = None;
+                    }
                 }
             }
 
@@ -1192,8 +1154,7 @@ impl Graph {
                 let size = dims.clone_cast::<[u32; 2]>();
 
                 match meta {
-                    Some(ResourceMeta::Texture { format, usage, .. }) => {
-                        //
+                    Some(ResourceMeta::Texture { .. }) => {
                         Ok(ResourceMeta::Texture {
                             size: Some(size),
                             format: Some(wgpu::TextureFormat::Rgba8Unorm),
@@ -1379,12 +1340,6 @@ impl GraphOps {
 
         let op_id = op_id.unwrap();
 
-        let inv_bindings = schema
-            .socket_bindings
-            .iter()
-            .map(|(s, b)| (*b, *s))
-            .collect::<Vec<_>>();
-
         let mut vert_binds = BTreeMap::default();
         let mut frag_binds = BTreeMap::default();
         let mut comp_binds = BTreeMap::default();
@@ -1500,7 +1455,6 @@ impl GraphOps {
 
     fn execute_node<'a>(
         &self,
-        state: &State,
         resource_ctx: &'a ResourceCtx<'a>,
         schema: &NodeSchema,
         node_id: NodeId,
@@ -1611,6 +1565,11 @@ impl GraphOps {
                     }
 
                     // pass.set_bind_group(index, bind_group, offsets)
+                    for (stage, bind_groups) in op_state.bind_groups.iter() {
+                        for (ix, group) in bind_groups.iter().enumerate() {
+                            pass.set_bind_group(ix as u32, group, &[]);
+                        }
+                    }
 
                     let (vertices, instances) = {
                         let (_, size, stride) = vertex_buffers[0].1;
@@ -1627,8 +1586,28 @@ impl GraphOps {
                 }
             }
             NodeOpId::Compute(i) => {
-                // log::warn!("executing compute node");
-                todo!();
+                let compute = &self.compute[*i];
+
+                let label = format!("Node {} - compute pass", node_id.0);
+                let desc = wgpu::ComputePassDescriptor {
+                    label: Some(label.as_str()),
+                };
+
+                let mut pass = encoder.begin_compute_pass(&desc);
+
+                pass.set_pipeline(&compute.pipeline);
+
+                for (stage, bind_groups) in op_state.bind_groups.iter() {
+                    if *stage == naga::ShaderStage::Compute {
+                        for (ix, group) in bind_groups.iter().enumerate() {
+                            pass.set_bind_group(ix as u32, group, &[]);
+                        }
+                    }
+                }
+
+                let [x, y, z] = op_state.workgroup_count.unwrap();
+
+                pass.dispatch_workgroups(x, y, z);
             }
             NodeOpId::NoOp => (),
         }

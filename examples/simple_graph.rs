@@ -479,10 +479,8 @@ pub async fn run() -> anyhow::Result<()> {
                     // for some reason i get a validation error if i actually attempt
                     // to execute the first resize
                     if first_resize {
-                        dbg!();
                         first_resize = false;
                     } else {
-                        dbg!();
                         state.resize(*physical_size);
                     }
                 }
