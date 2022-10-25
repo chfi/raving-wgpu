@@ -1310,7 +1310,15 @@ impl<'a> ResourceCtx<'a> {
         node_id: NodeId,
         socket: LocalSocketIx,
     ) -> Result<InputResource<'a>> {
-        let res_ref = &self.socket_resource_refs[&(node_id, socket)];
+        let res_ref = self
+            .socket_resource_refs
+            .get(&(node_id, socket))
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Socket {}.{socket} had no reference",
+                    node_id.0
+                )
+            })?;
 
         let in_res = res_ref
             .get_as_input(

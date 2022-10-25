@@ -1,61 +1,80 @@
 #version 450
 
+#define WORKGROUP_SIZE_X 8
+#define WORKGROUP_SIZE_Y 8
+#define WORKGROUP_SIZE_Z 1
+
 // one thread per cell across the entire dense board
-layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+layout(local_size_x = WORKGROUP_SIZE_X, 
+       local_size_y = WORKGROUP_SIZE_Y, 
+       local_size_z = WORKGROUP_SIZE_Z) in;
 
 layout(set = 0, binding = 0) buffer WorldCfg {
     uint columns;
     uint rows;
+    
+    uvec2 viewport_size;
+
+    vec2 view_offset;
+    float scale;
+    float _pad;
 } config;
 
-layout(set = 0, binding = 1) buffer GameWorld {
+layout(set = 1, binding = 0) readonly buffer SrcWorld {
     uint blocks[];
-} world;
+} src;
 
-// layout (set = 0, binding = 0) uniform Input {
-//     vec4 color;
-//     vec2 offset;
-//     float scale;
-// } inputs;
+layout(set = 1, binding = 1) buffer DstWorld {
+    uint blocks[];
+} dst;
 
-layout(push_constant) uniform Inputs {
-    vec4 color;
-    vec2 offset;
-    vec2 view_range;
-} inputs;
+#define BLOCK_COLUMNS 8
+#define BLOCK_ROWS 4
 
-#define BLOCK_ROW_0 0
-#define BLOCK_ROW_1 8
-#define BLOCK_ROW_2 16
-#define BLOCK_ROW_3 24
-
-bool alive(uint block, uint col, uint row) {
-    // the game board is represented using 32-bit unsigned integers,
-    // treating each cell as a single bit.
-
-    // each `uint` thus corresponds to a 4 row, 8 column block of cells,
-    // in row-major order (not that that really matters at this scale,
-    // other than for consistency)
-
-    // the easy way to avoid OOB
-    col = col % 8;
-    row = row % 4;
-    
-    // first, shift so the row is correct
-    uint cell = (block >> row);
-    return (cell >> col) == 1;
+uint block_index_for_cell(uvec2 cell) {
+    uint block_cols = config.columns / BLOCK_COLUMNS;
+    uvec2 blk = uvec2(cell.x / BLOCK_COLUMNS, cell.y / BLOCK_ROWS);
+    return blk.x + blk.y * block_cols;
 }
 
-// layout (push_constant) uniform Inputs {
-//   vec4 color;
-// } frag_inputs;
+bool get_alive_in_block(uint block, uint col, uint row) {
+    uvec2 loc = uvec2(col % BLOCK_COLUMNS, row % BLOCK_ROWS);
+    uint loc_i = loc.x + loc.y * BLOCK_COLUMNS;
+    bool cell_alive = ((block >> loc_i) & 1) == 1;
+    return cell_alive;
+}
+
+void set_alive_in_block(out uint block, uint col, uint row) {
+    uvec2 loc = uvec2(col % BLOCK_COLUMNS, row % BLOCK_ROWS);
+    uint loc_i = loc.x + loc.y * BLOCK_COLUMNS;
+    block |= (1 << loc_i);
+}
+
+// shared 
 
 void main() {
+    uvec2 cell = gl_GlobalInvocationID.xy;
+
+    if (cell.x >= config.columns || cell.y >= config.rows) {
+        return;
+    }
+
+    uint blk_index = block_index_for_cell(cell);
+    // clear destination blocks
+
+    if (cell.x % 8 == 0 && cell.y % 4 == 0) {
+        dst.blocks[blk_index] = 0;
+    }
+
+    // groupMemoryBarrier();
+    // memoryBarrierShared();
+    // memoryBarrierBuffer();
+
+    // bool alive = (cell.x + cell.y) % 11 == 0;
+
+    
     // uvec2 pixel = gl_GlobalInvocationID.xy;
-
     // uvec2 out_size = imageSize(image);
-
-
 
     // vec4 base = vec4(v_tex_coords.x, 1.0, v_tex_coords.y, 1.0);
     // vec4 color = vec4

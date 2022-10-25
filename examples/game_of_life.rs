@@ -45,12 +45,14 @@ struct GameOfLife {
     // compute_node: NodeId,
     view_node: NodeId,
 
-    cfg: Config,
-    blocks: Vec<u32>,
-
     vertex_buffer: wgpu::Buffer,
     cfg_buffer: wgpu::Buffer,
-    world_buffer: wgpu::Buffer,
+
+    cfg: Config,
+    blocks: Vec<u32>,
+    iteration_step: usize,
+    primary_world_buffer: wgpu::Buffer,
+    secondary_world_buffer: wgpu::Buffer,
 }
 
 impl GameOfLife {
@@ -83,7 +85,7 @@ impl GameOfLife {
         let cfg = Config {
             columns: 128,
             rows: 64,
-            
+
             viewport_size: [800, 600],
 
             view_offset: [0.0, 0.0],
@@ -114,27 +116,31 @@ impl GameOfLife {
             buffer
         };
 
-        let world_buffer = {
+        let (primary_world_buffer, secondary_world_buffer) = {
             use rand::prelude::*;
 
             let mut rng = rand::thread_rng();
 
-            // let mut data = vec![15u32; block_count];
-            let mut data = vec![0b1111_0000_1111_1010u32; block_count];
-            // let mut data = vec![0xFF_FF_3A_0Fu32; block_count];
+            // let mut data = vec![0b1111_0000_1111_1010u32; block_count];
+            let mut data = vec![0u32; block_count];
             rng.fill_bytes(bytemuck::cast_slice_mut(data.as_mut_slice()));
-            // let data = vec![0b1001_0000_1111_1010u16; bytes / 2];
-            // let data = vec![0b1111_1111_1111_1111u16; bytes / 2];
 
-            let buffer =
+            let primary =
                 state.device.create_buffer_init(&BufferInitDescriptor {
-                    label: Some("world buffer"),
+                    label: Some("primary world buffer"),
                     contents: bytemuck::cast_slice(data.as_slice()),
                     usage: wgpu::BufferUsages::STORAGE
                         | wgpu::BufferUsages::UNIFORM,
                 });
 
-            buffer
+            let secondary = state.device.create_buffer_init(&BufferInitDescriptor {
+                label: Some("secondary work buffer"),
+                contents: bytemuck::cast_slice(data.as_slice()),
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::UNIFORM,
+            });
+
+            (primary, secondary)
         };
 
         let vertex_buffer = {
@@ -180,16 +186,26 @@ impl GameOfLife {
         // 1 attachment output, 2
         let draw_n = graph.add_node(draw_view_schema);
 
+        let comp_n = graph.add_node(comp_schema);
+
         graph.add_link_from_transient("vertex", draw_n, 0);
         graph.add_link_from_transient("swapchain", draw_n, 1);
         graph.add_link_from_transient("cfg", draw_n, 2);
-        graph.add_link_from_transient("world", draw_n, 3);
+
+        graph.add_link_from_transient("dst_world", draw_n, 3);
+
+        graph.add_link_from_transient("cfg", comp_n, 0);
+        graph.add_link_from_transient("src_world", comp_n, 1);
+        graph.add_link_from_transient("dst_world", comp_n, 2);
+
+        // graph.add_link_from_transient("work", draw_n, 3);
 
         let mut result = GameOfLife {
             graph_scalars: rhai::Map::default(),
             vertex_buffer,
             cfg_buffer,
-            world_buffer,
+            primary_world_buffer,
+            secondary_world_buffer,
 
             cfg,
             blocks,
@@ -198,6 +214,8 @@ impl GameOfLife {
             graph,
 
             view_node: draw_n,
+
+            iteration_step: 0,
         };
 
         Ok(result)
@@ -243,20 +261,35 @@ impl GameOfLife {
                 );
 
                 transient_res.insert(
-                    "world".into(),
-                    InputResource::Buffer {
-                        size: self.len(),
-                        stride: None,
-                        buffer: &self.world_buffer,
-                    },
-                );
-
-                transient_res.insert(
                     "vertex".into(),
                     InputResource::Buffer {
                         size: 3 * 4,
                         stride: Some(4),
                         buffer: &self.vertex_buffer,
+                    },
+                );
+
+                let (src, dst) = if self.iteration_step % 2 == 0 {
+                    (&self.primary_world_buffer, &self.secondary_world_buffer)
+                } else {
+                    (&self.secondary_world_buffer, &self.primary_world_buffer)
+                };
+
+                transient_res.insert(
+                    "src_world".into(),
+                    InputResource::Buffer {
+                        size: self.len(),
+                        stride: None,
+                        buffer: src,
+                    },
+                );
+
+                transient_res.insert(
+                    "dst_world".into(),
+                    InputResource::Buffer {
+                        size: self.len(),
+                        stride: None,
+                        buffer: dst,
                     },
                 );
             }
@@ -306,10 +339,7 @@ async fn run() -> anyhow::Result<()> {
                 ref event,
                 window_id,
             } if window_id == window.id() => match event {
-                WindowEvent::KeyboardInput {
-                    input,
-                    ..
-                } => {
+                WindowEvent::KeyboardInput { input, .. } => {
                     use VirtualKeyCode as Key;
                     if let Some(code) = input.virtual_keycode {
                         if let Key::Up = code {
@@ -319,9 +349,7 @@ async fn run() -> anyhow::Result<()> {
                             gol.cfg.scale -= 0.5;
                             gol.cfg.scale = gol.cfg.scale.max(1.0);
                         }
-
                     }
-
                 }
                 WindowEvent::CloseRequested
                 | WindowEvent::KeyboardInput {

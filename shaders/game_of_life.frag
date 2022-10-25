@@ -4,9 +4,6 @@ layout(location = 0) in vec2 v_tex_coords;
 
 layout(location = 0) out vec4 f_color;
 
-// layout(set = 0, binding = 0) uniform texture2D t_diffuse;
-// layout(set = 0, binding = 1) uniform sampler s_diffuse;
-
 layout(set = 0, binding = 0) buffer WorldCfg {
     uint columns;
     uint rows;
@@ -22,44 +19,12 @@ layout(set = 0, binding = 1) buffer GameWorld {
     uint blocks[];
 } world;
 
-// layout(push_constant) uniform Inputs {
-//     vec4 color;
-//     vec2 offset;
-//     vec2 view_range;
-// } inputs;
-
 #define BLOCK_COLUMNS 8
 #define BLOCK_ROWS 4
-
-bool alive_cell(uint col, uint row) {
-    uint blk_col = col / BLOCK_COLUMNS;
-    uint blk_row = row / BLOCK_ROWS;
-
-    uint blk_cols = config.columns / BLOCK_COLUMNS;
-    uint blk_rows = config.rows / BLOCK_ROWS;
-
-    uint blk_counts = blk_cols * blk_rows;
-
-    uint blk_index = (blk_col + blk_row * blk_cols) % blk_counts;
-
-    uint block = world.blocks[blk_index];
-
-    uint i_col = col % BLOCK_COLUMNS;
-    uint i_row = row % BLOCK_ROWS;
-    // uvec2 local_index = uvec2(col % BLOCK_COLUMNS, row % BLOCK_ROWS);
-    // uint index = blk_col + blk_row * config.columns;
-    // uint len = config.columns * config.rows;
-
-    bool result = alive(block, i_col, i_row);
-
-    return result;
-}
 
 vec2 cell_pt_at_px(vec2 px) {
     return config.view_offset + px / config.scale;
 }
-
-
 
 void main() {
     vec2 px = gl_FragCoord.xy;
