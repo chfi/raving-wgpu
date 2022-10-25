@@ -10,9 +10,12 @@ layout(location = 0) out vec4 f_color;
 layout(set = 0, binding = 0) buffer WorldCfg {
     uint columns;
     uint rows;
+    
+    uvec2 viewport_size;
 
-    // uvec2 view_offset;
-    uvec2 view_size;
+    vec2 view_offset;
+    float scale;
+    float _pad;
 } config;
 
 layout(set = 0, binding = 1) buffer GameWorld {
@@ -29,13 +32,13 @@ layout(set = 0, binding = 1) buffer GameWorld {
 #define BLOCK_ROWS 4
 
 
-uvec2 get_cell_index_at_pixel(vec2 px) {
-    uint col = uint((px.x / config.view_size.x)
-                     * config.columns);
-    uint row = uint((px.y / config.view_size.y)
-                     * config.rows);
-    return uvec2(col, row);
-}
+// uvec2 get_cell_index_at_pixel(vec2 px) {
+//     uint col = uint((px.x / config.view_size.x)
+//                      * config.columns);
+//     uint row = uint((px.y / config.view_size.y)
+//                      * config.rows);
+//     return uvec2(col, row);
+// }
 // uint get_local_index_at_pixel() {
 
 // }
@@ -104,13 +107,33 @@ bool alive_cell(uint col, uint row) {
     return result;
 }
 
+vec2 cell_pt_at_px(vec2 px) {
+    return config.view_offset + px / config.scale;
+}
+
+
+
 void main() {
     vec2 px = gl_FragCoord.xy;
 
-    uvec2 cell_i = get_cell_index_at_pixel(px);
+    vec2 cell_pt = cell_pt_at_px(px);
+
+    uint col = uint(floor(cell_pt.x));
+    uint row = uint(floor(cell_pt.y));
+
+    float r = float(col % 32) / 32.0;
+    float b = float(row % 32) / 32.0;
+
+    bool in_world = col <= config.columns && row <= config.rows;
+
+    f_color = in_world ? vec4(r, 0.0, b, 1.0) : vec4(vec3(0.0), 1.0);
+
+    // float r = float((uint(floor(cell_pt.x)) % 16) * 16)
+
+    // uvec2 cell_i = get_cell_index_at_pixel(px);
 
     // vec4 base_color = cell_color(cell_i.x, cell_i.y);
 
-    f_color = alive_cell(cell_i.x, cell_i.y) 
-                ? vec4(1.0) : vec4(0.0, 0.0, 0.0, 1.0);
+    // f_color = alive_cell(cell_i.x, cell_i.y) 
+                // ? vec4(1.0) : vec4(0.0, 0.0, 0.0, 1.0);
 }

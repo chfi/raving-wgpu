@@ -30,8 +30,10 @@ use raving_wgpu::graph::dfrog::{
 struct Config {
     columns: u32,
     rows: u32,
-    // view_offset: [u32; 2],
-    view_size: [u32; 2],
+    viewport_size: [u32; 2],
+    view_offset: [f32; 2],
+    scale: f32,
+    _pad: f32,
     // out_width: u32,
     // out_height: u32,
 }
@@ -79,11 +81,14 @@ impl GameOfLife {
         let mut graph = Graph::new();
 
         let cfg = Config {
-            columns: 64,
+            columns: 128,
             rows: 64,
+            
+            viewport_size: [800, 600],
 
-            // view_offset: [0, 0],
-            view_size: [800, 600],
+            view_offset: [0.0, 0.0],
+            scale: 10.0,
+            _pad: 0.0,
         };
 
         let b_rows = cfg.rows as usize / Self::BLOCK_ROWS;
@@ -114,10 +119,8 @@ impl GameOfLife {
 
             let mut rng = rand::thread_rng();
 
-            // let data =
-
             // let mut data = vec![15u32; block_count];
-            let mut data = vec![3u32; block_count];
+            let mut data = vec![0b11111111u32; block_count];
             // rng.fill_bytes(bytemuck::cast_slice_mut(data.as_mut_slice()));
             // let data = vec![0b1001_0000_1111_1010u16; bytes / 2];
             // let data = vec![0b1111_1111_1111_1111u16; bytes / 2];
@@ -302,6 +305,23 @@ async fn run() -> anyhow::Result<()> {
                 ref event,
                 window_id,
             } if window_id == window.id() => match event {
+                WindowEvent::KeyboardInput {
+                    input,
+                    ..
+                } => {
+                    use VirtualKeyCode as Key;
+                    if let Some(code) = input.virtual_keycode {
+                        if let Key::Up = code {
+                            gol.cfg.scale += 0.5;
+                            // gol.cfg.scale = gol.cfg.scale.max(1.0);
+                        } else if let Key::Down = code {
+                            gol.cfg.scale -= 0.5;
+                            gol.cfg.scale = gol.cfg.scale.max(1.0);
+                        }
+
+                    }
+
+                }
                 WindowEvent::CloseRequested
                 | WindowEvent::KeyboardInput {
                     input:
@@ -359,14 +379,13 @@ async fn run() -> anyhow::Result<()> {
                     let w_size = window.inner_size();
                     let size = [w_size.width, w_size.height];
 
-                    gol.cfg.view_size = size;
+                    gol.cfg.viewport_size = size;
 
                     state.queue.write_buffer(
                         &gol.cfg_buffer,
                         0,
                         bytemuck::cast_slice(&[gol.cfg]),
                     );
-                    // gol.world.c
                 }
 
                 window.request_redraw();
