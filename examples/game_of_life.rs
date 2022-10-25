@@ -120,8 +120,9 @@ impl GameOfLife {
             let mut rng = rand::thread_rng();
 
             // let mut data = vec![15u32; block_count];
-            let mut data = vec![0b11111111u32; block_count];
-            // rng.fill_bytes(bytemuck::cast_slice_mut(data.as_mut_slice()));
+            let mut data = vec![0b1111_0000_1111_1010u32; block_count];
+            // let mut data = vec![0xFF_FF_3A_0Fu32; block_count];
+            rng.fill_bytes(bytemuck::cast_slice_mut(data.as_mut_slice()));
             // let data = vec![0b1001_0000_1111_1010u16; bytes / 2];
             // let data = vec![0b1111_1111_1111_1111u16; bytes / 2];
 
