@@ -27,26 +27,35 @@ use raving_wgpu::graph::dfrog::{
 
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
-struct GameWorldCfg {
+struct Config {
     columns: u32,
     rows: u32,
+    // view_offset: [u32; 2],
+    view_size: [u32; 2],
+    // out_width: u32,
+    // out_height: u32,
 }
 
-struct GameWorld {
-    cfg: GameWorldCfg,
+struct GameOfLife {
+    graph: Graph,
+    graph_scalars: rhai::Map,
+
+    // compute_node: NodeId,
+    view_node: NodeId,
+
+    cfg: Config,
     blocks: Vec<u32>,
+
+    vertex_buffer: wgpu::Buffer,
+    cfg_buffer: wgpu::Buffer,
+    world_buffer: wgpu::Buffer,
 }
 
-impl GameWorld {
+impl GameOfLife {
+    const CFG_SIZE: usize = std::mem::size_of::<[u32; 2]>();
+
     const BLOCK_COLUMNS: usize = 8;
     const BLOCK_ROWS: usize = 4;
-
-    pub fn new(cfg: GameWorldCfg) -> Self {
-        let block_count = (cfg.columns * cfg.rows) as usize;
-        let blocks = vec![0u32; block_count];
-
-        Self { cfg, blocks }
-    }
 
     pub fn len(&self) -> usize {
         // self.cfg.columns as usize
@@ -65,47 +74,53 @@ impl GameWorld {
         let i = Self::block_index(column, row);
         1 << i
     }
-}
-
-struct GameOfLife {
-    graph: Graph,
-
-    world: GameWorld,
-
-    cfg_buffer: wgpu::Buffer,
-    world_buffer: wgpu::Buffer,
-}
-
-impl GameOfLife {
-    const CFG_SIZE: usize = std::mem::size_of::<[u32; 2]>();
 
     fn new(state: &State) -> Result<Self> {
         let mut graph = Graph::new();
 
-        let cfg = GameWorldCfg {
+        let cfg = Config {
             columns: 64,
             rows: 64,
+
+            // view_offset: [0, 0],
+            view_size: [800, 600],
         };
 
-        let world = GameWorld::new(cfg);
+        let b_rows = cfg.rows as usize / Self::BLOCK_ROWS;
+        let b_cols = cfg.columns as usize / Self::BLOCK_COLUMNS;
+
+        let c_rows = cfg.rows;
+        let c_cols = cfg.columns;
+        log::warn!("creating board with {c_rows} rows and {c_cols} columns");
+        log::warn!("{b_rows} * {b_cols} blocks");
+        let block_count = b_rows * b_cols;
+        let blocks = vec![0u32; block_count];
 
         let cfg_buffer = {
             let buffer =
                 state.device.create_buffer_init(&BufferInitDescriptor {
-                    label: Some("fg buffer"),
-                    contents: bytemuck::cast_slice(&[cfg.columns, cfg.rows]),
+                    label: Some("config buffer"),
+                    contents: bytemuck::cast_slice(&[cfg]),
                     usage: wgpu::BufferUsages::STORAGE
-                        | wgpu::BufferUsages::UNIFORM,
+                        | wgpu::BufferUsages::UNIFORM
+                        | wgpu::BufferUsages::COPY_DST,
                 });
 
             buffer
         };
 
         let world_buffer = {
-            let cells = world.len();
-            let bytes = cells / 8;
+            use rand::prelude::*;
 
-            let data = vec![0b10101010u8; bytes];
+            let mut rng = rand::thread_rng();
+
+            // let data =
+
+            // let mut data = vec![15u32; block_count];
+            let mut data = vec![3u32; block_count];
+            // rng.fill_bytes(bytemuck::cast_slice_mut(data.as_mut_slice()));
+            // let data = vec![0b1001_0000_1111_1010u16; bytes / 2];
+            // let data = vec![0b1111_1111_1111_1111u16; bytes / 2];
 
             let buffer =
                 state.device.create_buffer_init(&BufferInitDescriptor {
@@ -113,6 +128,17 @@ impl GameOfLife {
                     contents: bytemuck::cast_slice(data.as_slice()),
                     usage: wgpu::BufferUsages::STORAGE
                         | wgpu::BufferUsages::UNIFORM,
+                });
+
+            buffer
+        };
+
+        let vertex_buffer = {
+            let buffer =
+                state.device.create_buffer_init(&BufferInitDescriptor {
+                    label: Some("fullscreen vertex buffer"),
+                    contents: [0u8; 4 * 3].as_slice(),
+                    usage: wgpu::BufferUsages::VERTEX,
                 });
 
             buffer
@@ -132,7 +158,7 @@ impl GameOfLife {
                 state,
                 vert_src,
                 frag_src,
-                None,
+                ["vertex_in"],
                 &[state.surface_format],
             )?
         };
@@ -150,21 +176,34 @@ impl GameOfLife {
         // 1 attachment output, 2
         let draw_n = graph.add_node(draw_view_schema);
 
-        graph.add_link_from_transient("swapchain", draw_n, 0);
-        graph.add_link_from_transient("cfg", draw_n, 1);
-        graph.add_link_from_transient("world", draw_n, 2);
+        graph.add_link_from_transient("vertex", draw_n, 0);
+        graph.add_link_from_transient("swapchain", draw_n, 1);
+        graph.add_link_from_transient("cfg", draw_n, 2);
+        graph.add_link_from_transient("world", draw_n, 3);
 
         let mut result = GameOfLife {
+            graph_scalars: rhai::Map::default(),
+            vertex_buffer,
             cfg_buffer,
             world_buffer,
-            world,
+
+            cfg,
+            blocks,
+
+            // world,
             graph,
+
+            view_node: draw_n,
         };
 
         Ok(result)
     }
 
-    fn render(&mut self, state: &mut State, window_dims: [u32; 2]) -> Result<()> {
+    fn render(
+        &mut self,
+        state: &mut State,
+        window_dims: [u32; 2],
+    ) -> Result<()> {
         if let Ok(output) = state.surface.get_current_texture() {
             let output_view = output
                 .texture
@@ -202,31 +241,41 @@ impl GameOfLife {
                 transient_res.insert(
                     "world".into(),
                     InputResource::Buffer {
-                        size: self.world.len(),
+                        size: self.len(),
                         stride: None,
                         buffer: &self.world_buffer,
                     },
                 );
+
+                transient_res.insert(
+                    "vertex".into(),
+                    InputResource::Buffer {
+                        size: 3 * 4,
+                        stride: Some(4),
+                        buffer: &self.vertex_buffer,
+                    },
+                );
             }
-            /*
-            graph.update_transient_cache(&transient_res);
+            self.graph.update_transient_cache(&transient_res);
 
             // log::warn!("validating graph");
-            let valid =
-                graph.validate(&transient_res, &graph_scalars).unwrap();
+            let valid = self
+                .graph
+                .validate(&transient_res, &self.graph_scalars)
+                .unwrap();
 
             if !valid {
                 log::error!("graph validation error");
             }
 
             // log::warn!("executing graph");
-            let sub_index = graph
-                .execute(&state, &transient_res, &graph_scalars)
+            let sub_index = self
+                .graph
+                .execute(&state, &transient_res, &self.graph_scalars)
                 .unwrap();
-            state.device.poll(
-                wgpu::MaintainBase::WaitForSubmissionIndex(sub_index),
-            );
-            */
+            state
+                .device
+                .poll(wgpu::MaintainBase::WaitForSubmissionIndex(sub_index));
 
             output.present();
         } else {
@@ -243,8 +292,7 @@ async fn run() -> anyhow::Result<()> {
     let size = window.inner_size();
 
     let dims = [size.width, size.height];
-
-    let gol = GameOfLife::new(&state)?;
+    let mut gol = GameOfLife::new(&state)?;
 
     let mut first_resize = true;
 
@@ -279,6 +327,10 @@ async fn run() -> anyhow::Result<()> {
                 _ => {}
             },
             Event::RedrawRequested(window_id) if window_id == window.id() => {
+                let w_size = window.inner_size();
+                let size = [w_size.width, w_size.height];
+
+                gol.render(&mut state, size).unwrap();
 
                 // state.update();
                 /*
@@ -302,6 +354,21 @@ async fn run() -> anyhow::Result<()> {
             Event::MainEventsCleared => {
                 // RedrawRequested will only trigger once, unless we manually
                 // request it.
+
+                {
+                    let w_size = window.inner_size();
+                    let size = [w_size.width, w_size.height];
+
+                    gol.cfg.view_size = size;
+
+                    state.queue.write_buffer(
+                        &gol.cfg_buffer,
+                        0,
+                        bytemuck::cast_slice(&[gol.cfg]),
+                    );
+                    // gol.world.c
+                }
+
                 window.request_redraw();
             }
 

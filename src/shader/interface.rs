@@ -188,6 +188,10 @@ impl GroupBindings {
             }
         }
 
+        shader_bindings
+            .values_mut()
+            .for_each(|b| b.sort_by_key(|b| b.0.binding.binding));
+
         let mut final_bindings = Vec::new();
 
         let mut expected_group = 0;
@@ -212,6 +216,7 @@ impl GroupBindings {
                 if binding_ix as u32 != def.binding.binding
                     || expected_group != def.binding.group
                 {
+                    dbg!(&defs);
                     anyhow::bail!(
                         "Binding index mismatch: Was (group {}, binding {}),\
                         but expected (group {}, binding {})",
@@ -366,7 +371,7 @@ impl GroupBindings {
 
             log::error!("group {} - {:?}", group_ix, entries);
 
-            let bindings = defs.into_iter().map(|(g,_)| g).collect();
+            let bindings = defs.into_iter().map(|(g, _)| g).collect();
 
             result.push(GroupBindings {
                 group_ix,

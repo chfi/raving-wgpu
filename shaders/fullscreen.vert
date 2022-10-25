@@ -1,4 +1,6 @@
 #version 450 
+
+layout (location = 0) in float lol;
 // ...
 layout (location = 0) out vec2 outUV;
 // ... 

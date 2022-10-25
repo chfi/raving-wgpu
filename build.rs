@@ -16,7 +16,7 @@ fn main() {
     let shader_files = find_shader_files();
 
     for path in shader_files.iter() {
-        println!("cargo:rerun-if-changed={}", path.to_str().unwrap());
+        // println!("cargo:rerun-if-changed={}", path.to_str().unwrap());
     }
 
     compile_shaders(&shader_files)

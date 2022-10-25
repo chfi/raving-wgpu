@@ -1,13 +1,14 @@
 #version 450
 
-layout (rgba8, set = 0, binding = 0) writeonly uniform image2D image;
-
 // one thread per cell across the entire dense board
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
-layout (set = 0, binding = 0) buffer GameWorld {
+layout(set = 0, binding = 0) buffer WorldCfg {
     uint columns;
     uint rows;
+} config;
+
+layout(set = 0, binding = 1) buffer GameWorld {
     uint blocks[];
 } world;
 
@@ -50,9 +51,9 @@ bool alive(uint block, uint col, uint row) {
 // } frag_inputs;
 
 void main() {
-    uvec2 pixel = gl_GlobalInvocationID.xy;
+    // uvec2 pixel = gl_GlobalInvocationID.xy;
 
-    uvec2 out_size = imageSize(image);
+    // uvec2 out_size = imageSize(image);
 
 
 
