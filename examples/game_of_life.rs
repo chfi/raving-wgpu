@@ -27,6 +27,60 @@ use raving_wgpu::graph::dfrog::{
     Graph, InputResource, Node, NodeSchema, NodeSchemaId,
 };
 
+struct ViewMachine {
+    prev_x: f32,
+    prev_y: f32,
+    x: f32,
+    y: f32,
+    // vx: f32,
+    // vy: f32,
+    ax: f32,
+    ay: f32,
+
+    friction: f32,
+}
+
+impl ViewMachine {
+    pub fn new(friction: f32, x: f32, y: f32) -> Self {
+        Self {
+            prev_x: x,
+            prev_y: y,
+            x,
+            y,
+            ax: 0.0,
+            ay: 0.0,
+
+            friction,
+        }
+    }
+
+    pub fn set_accel(&mut self, x: f32, y: f32) {
+        self.ax = x;
+        self.ay = y;
+    }
+
+    pub fn get(&self) -> [f32; 2] {
+        [self.x, self.y]
+    }
+
+    pub fn update(&mut self, dt: f32) {
+        let vx = self.x - self.prev_x;
+        let vy = self.y - self.prev_y;
+
+        self.prev_x = self.x;
+        self.prev_y = self.y;
+
+        let vx = vx * self.friction;
+        let vy = vy * self.friction;
+
+        self.x += vx + self.ax * dt * dt;
+        self.y += vy + self.ay * dt * dt;
+
+        self.ax = 0.0;
+        self.ay = 0.0;
+    }
+}
+
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
 struct Config {
@@ -41,6 +95,7 @@ struct Config {
 }
 
 struct GameOfLife {
+    view: ViewMachine,
     graph: Graph,
     graph_scalars: rhai::Map,
 
@@ -86,13 +141,15 @@ impl GameOfLife {
     fn new(state: &State) -> Result<Self> {
         let mut graph = Graph::new();
 
+        let view = ViewMachine::new(0.95, 0.0, 0.0);
+
         let cfg = Config {
             columns: 128,
             rows: 64,
 
             viewport_size: [800, 600],
 
-            view_offset: [0.0, 0.0],
+            view_offset: view.get(),
             scale: 10.0,
             _pad: 0.0,
         };
@@ -215,6 +272,7 @@ impl GameOfLife {
         graph.add_link_from_transient("dst_world", comp_n, 2);
 
         let mut result = GameOfLife {
+            view,
             running: false,
 
             graph_scalars: rhai::Map::default(),
@@ -236,6 +294,11 @@ impl GameOfLife {
         };
 
         Ok(result)
+    }
+
+    fn update(&mut self, dt: f32) {
+        self.view.update(dt);
+        self.cfg.view_offset = self.view.get();
     }
 
     fn render(
@@ -360,12 +423,49 @@ async fn run() -> anyhow::Result<()> {
 
     let mut first_resize = true;
 
+    let mut prev_touch = None;
+
+    let mut prev_frame_t = std::time::Instant::now();
+
     event_loop.run(move |event, _, control_flow| {
         match event {
             Event::WindowEvent {
                 ref event,
                 window_id,
             } if window_id == window.id() => match event {
+                WindowEvent::Touch(touch) => {
+                    use winit::event::TouchPhase;
+                    let loc: winit::dpi::PhysicalPosition<f64> = touch.location;
+                    let pos = [loc.x, loc.y];
+                    match touch.phase {
+                        TouchPhase::Started => { 
+                            prev_touch = Some(pos);
+                        }
+                        TouchPhase::Moved => { 
+                            if let Some(prev) = prev_touch {
+                                let dx = pos[0] - prev[0];
+                                let dy = pos[1] - prev[1];
+                                let ax = dx as f32 * gol.cfg.scale;
+                                let ay = dy as f32 * gol.cfg.scale;
+                                gol.view.set_accel(ax, ay);
+                            }
+                            prev_touch = Some(pos);
+                        }
+                        TouchPhase::Ended |
+                        TouchPhase::Cancelled => { 
+                            prev_touch = None;
+                        }
+                    }
+                    //
+
+                    if !matches!(touch.phase, TouchPhase::Moved) {
+                        println!("{touch:#?}");
+                    }
+                }
+                WindowEvent::TouchpadPressure { device_id, pressure, stage } => {
+                    //
+                    println!("TouchPadPressure pressure: {pressure:?}\tstage: {stage:?}");
+                }
                 WindowEvent::KeyboardInput { input, .. } => {
                     use VirtualKeyCode as Key;
                     if let Some(code) = input.virtual_keycode {
@@ -414,6 +514,11 @@ async fn run() -> anyhow::Result<()> {
             Event::MainEventsCleared => {
                 // RedrawRequested will only trigger once, unless we manually
                 // request it.
+
+                let dt = prev_frame_t.elapsed().as_secs_f32();
+                prev_frame_t = std::time::Instant::now();
+
+                gol.update(dt);
 
                 {
                     let w_size = window.inner_size();
