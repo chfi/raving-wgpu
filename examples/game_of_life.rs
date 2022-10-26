@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::{collections::HashMap, sync::atomic::AtomicBool};
 
 use std::sync::Arc;
@@ -14,10 +15,12 @@ use raving_wgpu::{
     NodeId,
 };
 use raving_wgpu::{DataType, State};
+use rustc_hash::FxHashMap;
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
     BufferUsages, Extent3d, ImageCopyTexture, Origin3d,
 };
+use winit::dpi::PhysicalPosition;
 use winit::event::{
     ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent,
 };
@@ -38,6 +41,120 @@ struct ViewMachine {
     ay: f32,
 
     friction: f32,
+
+    touches: TouchHandler,
+    // first_touch: Option<u64>,
+    // touches: FxHashMap<u64, PhysicalPosition<f64>>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TouchState {
+    id: u64,
+    start: PhysicalPosition<f64>,
+    end: PhysicalPosition<f64>,
+}
+
+impl TouchState {
+    fn new(id: u64, start: PhysicalPosition<f64>) -> Self {
+        Self {
+            id,
+            start,
+            end: start,
+        }
+    }
+
+    fn reset_to(&mut self, start: PhysicalPosition<f64>) {
+        self.start = start;
+        self.end = start;
+    }
+
+    fn update_end(&mut self, end: PhysicalPosition<f64>) {
+        self.end = end;
+    }
+}
+
+#[derive(Default)]
+struct TouchHandler {
+    touches: VecDeque<TouchState>,
+}
+
+#[derive(Debug)]
+pub enum TouchResult {
+    Drag {
+        delta: [f64; 2],
+    },
+    Pinch {
+        delta_0: [f64; 2],
+        delta_1: [f64; 2],
+    },
+}
+
+impl TouchHandler {
+    fn handle_touch(
+        &mut self,
+        touch: &winit::event::Touch,
+    ) -> Option<TouchResult> {
+        use winit::event::TouchPhase;
+        let loc: winit::dpi::PhysicalPosition<f64> = touch.location;
+        // let pos = [loc.x, loc.y];
+        let id = touch.id;
+
+        // let touch_count = self.touches.len();
+
+        match touch.phase {
+            TouchPhase::Started => {
+                let state = TouchState::new(id, loc);
+                self.touches.push_back(state);
+                None
+            }
+            TouchPhase::Moved => {
+                if let Some(state) = self.find_state_mut(touch.id) {
+                    state.update_end(touch.location);
+                }
+                self.result()
+            }
+            TouchPhase::Ended => {
+                self.remove_state(touch.id);
+                None
+            }
+            TouchPhase::Cancelled => {
+                self.remove_state(touch.id);
+                None
+            }
+        }
+    }
+
+    fn result(&self) -> Option<TouchResult> {
+        match self.touches.len() {
+            0 => None,
+            1 => {
+                let delta = self.touch_delta(0).unwrap();
+                Some(TouchResult::Drag { delta })
+            }
+            n => {
+                let delta_0 = self.touch_delta(0).unwrap();
+                let delta_1 = self.touch_delta(1).unwrap();
+                Some(TouchResult::Pinch { delta_0, delta_1 })
+            }
+        }
+    }
+
+    fn touch_delta(&self, index: usize) -> Option<[f64; 2]> {
+        let touch = self.touches.get(index)?;
+        let x = touch.end.x - touch.start.x;
+        let y = touch.end.y - touch.start.y;
+        Some([x, y])
+    }
+
+    fn remove_state(&mut self, id: u64) {
+        if let Some(ix) = self.touches.iter().position(|s| s.id == id) {
+            self.touches.remove(ix);
+        }
+    }
+
+    fn find_state_mut(&mut self, id: u64) -> Option<&mut TouchState> {
+        self.touches.iter_mut().find(|s| s.id == id)
+    }
 }
 
 impl ViewMachine {
@@ -51,6 +168,20 @@ impl ViewMachine {
             ay: 0.0,
 
             friction,
+
+            touches: TouchHandler::default(),
+        }
+    }
+
+    pub fn handle_touch(
+        &mut self,
+        view_scale: f32,
+        touch: &winit::event::Touch,
+    ) {
+        //
+        let result = self.touches.handle_touch(touch);
+        if let Some(result) = result {
+            dbg!(result);
         }
     }
 
@@ -423,8 +554,6 @@ async fn run() -> anyhow::Result<()> {
 
     let mut first_resize = true;
 
-    let mut prev_touch = None;
-
     let mut prev_frame_t = std::time::Instant::now();
 
     event_loop.run(move |event, _, control_flow| {
@@ -434,33 +563,12 @@ async fn run() -> anyhow::Result<()> {
                 window_id,
             } if window_id == window.id() => match event {
                 WindowEvent::Touch(touch) => {
-                    use winit::event::TouchPhase;
-                    let loc: winit::dpi::PhysicalPosition<f64> = touch.location;
-                    let pos = [loc.x, loc.y];
-                    match touch.phase {
-                        TouchPhase::Started => { 
-                            prev_touch = Some(pos);
-                        }
-                        TouchPhase::Moved => { 
-                            if let Some(prev) = prev_touch {
-                                let dx = pos[0] - prev[0];
-                                let dy = pos[1] - prev[1];
-                                let ax = dx as f32 * gol.cfg.scale;
-                                let ay = dy as f32 * gol.cfg.scale;
-                                gol.view.set_accel(ax, ay);
-                            }
-                            prev_touch = Some(pos);
-                        }
-                        TouchPhase::Ended |
-                        TouchPhase::Cancelled => { 
-                            prev_touch = None;
-                        }
-                    }
+                    gol.view.handle_touch(gol.cfg.scale, touch);
                     //
 
-                    if !matches!(touch.phase, TouchPhase::Moved) {
-                        println!("{touch:#?}");
-                    }
+                    // if !matches!(touch.phase, TouchPhase::Moved) {
+                        // println!("{touch:#?}");
+                    // }
                 }
                 WindowEvent::TouchpadPressure { device_id, pressure, stage } => {
                     //
