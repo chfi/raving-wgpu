@@ -76,20 +76,29 @@ impl TouchState {
 #[derive(Default)]
 struct TouchHandler {
     touches: VecDeque<TouchState>,
+    last_result: Option<TouchResult>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum TouchResult {
     Drag {
+        pos: [f64; 2],
         delta: [f64; 2],
     },
     Pinch {
+        pos_0: [f64; 2],
         delta_0: [f64; 2],
+        pos_1: [f64; 2],
         delta_1: [f64; 2],
     },
 }
 
 impl TouchHandler {
+    fn take(&mut self) -> Option<TouchResult> {
+        self.touches.iter_mut().for_each(|t| t.reset_to(t.end));
+        self.last_result.take()
+    }
+
     fn handle_touch(
         &mut self,
         touch: &winit::event::Touch,
@@ -111,7 +120,9 @@ impl TouchHandler {
                 if let Some(state) = self.find_state_mut(touch.id) {
                     state.update_end(touch.location);
                 }
-                self.result()
+                let result = self.result();
+                self.last_result = result;
+                result
             }
             TouchPhase::Ended => {
                 self.remove_state(touch.id);
@@ -129,12 +140,26 @@ impl TouchHandler {
             0 => None,
             1 => {
                 let delta = self.touch_delta(0).unwrap();
-                Some(TouchResult::Drag { delta })
+                let pos = self.touches[0].end;
+                Some(TouchResult::Drag {
+                    pos: [pos.x, pos.y],
+                    delta,
+                })
             }
             n => {
                 let delta_0 = self.touch_delta(0).unwrap();
                 let delta_1 = self.touch_delta(1).unwrap();
-                Some(TouchResult::Pinch { delta_0, delta_1 })
+                let p0 = self.touches[0].end;
+                let p1 = self.touches[1].end;
+
+                let pos_0 = [p0.x, p0.y];
+                let pos_1 = [p1.x, p1.y];
+                Some(TouchResult::Pinch {
+                    pos_0,
+                    delta_0,
+                    pos_1,
+                    delta_1,
+                })
             }
         }
     }
@@ -179,15 +204,7 @@ impl ViewMachine {
         touch: &winit::event::Touch,
     ) {
         //
-        let result = self.touches.handle_touch(touch);
-        if let Some(result) = result {
-            dbg!(result);
-        }
-    }
-
-    pub fn set_accel(&mut self, x: f32, y: f32) {
-        self.ax = x;
-        self.ay = y;
+        let _result = self.touches.handle_touch(touch);
     }
 
     pub fn get(&self) -> [f32; 2] {
@@ -428,6 +445,52 @@ impl GameOfLife {
     }
 
     fn update(&mut self, dt: f32) {
+        let scale = self.cfg.scale;
+
+        if let Some(touch_result) = self.view.touches.take() {
+            match touch_result {
+                TouchResult::Drag { pos, delta } => {
+                    let [x, y] = delta;
+                    let ax = delta[0] as f32 * scale;
+                    let ay = delta[1] as f32 * scale;
+
+                    let a = y.atan2(x);
+
+                    self.view.ax = ax;
+                    self.view.ay = ay;
+                }
+                TouchResult::Pinch {
+                    pos_0,
+                    delta_0,
+                    pos_1,
+                    delta_1,
+                } => {
+                    let [x0, y0] = pos_0;
+                    let [x1, y1] = pos_1;
+
+                    let [dx0, dy0] = delta_0;
+                    let [dx1, dy1] = delta_1;
+
+                    let [d_x, d_y] = [x1 - x0, y1 - y0];
+
+                    let dist_0 = (d_x * d_x + d_y * d_y).sqrt();
+
+                    let x0_ = x0 + dx0;
+                    let y0_ = y0 + dy0;
+                    let x1_ = x1 + dx1;
+                    let y1_ = y1 + dy1;
+
+                    let [d_x, d_y] = [x1_ - x0_, y1_ - y0_];
+                    let dist_1 = (d_x * d_x + d_y * d_y).sqrt();
+
+                    let quot = dist_1 / dist_0;
+
+                    self.cfg.scale *= quot as f32;
+                    self.cfg.scale = self.cfg.scale.max(1.0);
+                }
+            }
+        }
+
         self.view.update(dt);
         self.cfg.view_offset = self.view.get();
     }
