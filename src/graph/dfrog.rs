@@ -583,6 +583,49 @@ impl Graph {
         }
     }
 
+    pub fn add_node(&mut self, schema: NodeSchemaId) -> NodeId {
+        let id = NodeId::from(self.nodes.len());
+
+        let node = Node {
+            schema,
+            links: Vec::new(),
+        };
+
+        self.nodes.push(node);
+
+        id
+    }
+
+    pub fn add_link(
+        &mut self,
+        src: NodeId,
+        src_socket: LocalSocketIx,
+        dst: NodeId,
+        dst_socket: LocalSocketIx,
+    ) {
+        let node = &mut self.nodes[src.0];
+        node.links.push((src_socket, (dst, dst_socket)));
+    }
+
+    pub fn add_link_from_transient(
+        &mut self,
+        name: &str,
+        dst: NodeId,
+        socket: LocalSocketIx,
+    ) -> Option<()> {
+        self.transient_links.insert((dst, socket), name.into());
+
+        Some(())
+    }
+
+    pub fn set_node_preprocess_fn<F>(&mut self, node: NodeId, f: F)
+    where
+        F: Fn(&NodeCtx<'_>, &mut NodeOpState) + Send + Sync + 'static,
+    {
+        let preprocess = Arc::new(f) as NodePreprocessFn;
+        self.ops.node_preprocess_fns.insert(node, preprocess);
+    }
+
     pub fn add_graphics_schema<'a>(
         &mut self,
         state: &State,
@@ -927,42 +970,6 @@ impl Graph {
         Ok(sub_ix)
     }
 
-    pub fn add_node(&mut self, schema: NodeSchemaId) -> NodeId {
-        let id = NodeId::from(self.nodes.len());
-
-        let node = Node {
-            schema,
-            links: Vec::new(),
-        };
-
-        self.nodes.push(node);
-
-        id
-    }
-
-    pub fn add_link(
-        &mut self,
-        src: NodeId,
-        src_socket: LocalSocketIx,
-        dst: NodeId,
-        dst_socket: LocalSocketIx,
-    ) {
-        let node = &mut self.nodes[src.0];
-        node.links.push((src_socket, (dst, dst_socket)));
-    }
-
-    pub fn add_link_from_transient(
-        &mut self,
-        transient_key: &str,
-        dst: NodeId,
-        dst_socket: LocalSocketIx,
-    ) -> Option<()> {
-        self.transient_links
-            .insert((dst, dst_socket), transient_key.into());
-
-        Some(())
-    }
-
     pub fn build_topological_order(&self) -> Result<Vec<NodeId>> {
         let mut order = Vec::new();
 
@@ -1269,6 +1276,8 @@ pub enum NodeOpId {
     Compute(usize),
 }
 
+type NodePreprocessFn = Arc<dyn Fn(&NodeCtx<'_>, &mut NodeOpState)>;
+
 #[derive(Default)]
 pub struct GraphOps {
     // vertex_shaders: HashMap<PathBuf, VertexShader>,
@@ -1279,6 +1288,8 @@ pub struct GraphOps {
 
     pub node_op_state: FxHashMap<NodeId, NodeOpState>,
     schema_ops: FxHashMap<NodeSchemaId, NodeOpId>,
+
+    node_preprocess_fns: FxHashMap<NodeId, NodePreprocessFn>,
 }
 
 pub struct ResourceCtx<'a> {
@@ -1292,6 +1303,8 @@ pub struct ResourceCtx<'a> {
 pub struct NodeCtx<'a> {
     resource: &'a ResourceCtx<'a>,
     node_id: NodeId,
+
+    pub workgroup_size: Option<[u32; 3]>,
 }
 
 impl<'a> NodeCtx<'a> {
@@ -1304,6 +1317,29 @@ impl<'a> NodeCtx<'a> {
 }
 
 impl<'a> ResourceCtx<'a> {
+    pub fn node_ctx(&'a self, ops: &GraphOps, schema: &NodeSchema, node_id: NodeId) -> NodeCtx<'a> {
+        // let node = &graph.nodes[node_id.0];
+        let op_id = ops.schema_ops.get(&schema.schema_id).unwrap();
+
+        let mut ctx = NodeCtx {
+            resource: self,
+            node_id,
+            workgroup_size: None,
+        };
+
+        // for now we only need to set the workgroup size here
+        match op_id {
+            NodeOpId::NoOp => (),
+            NodeOpId::Graphics(_i) => (),
+            NodeOpId::Compute(i) => {
+                let compute = &ops.compute[*i];
+                ctx.workgroup_size = Some(compute.workgroup_size);
+            }
+        }
+
+        ctx
+    }
+
     // InputResources includes metadata
     pub fn get_resource_at_socket(
         &self,
@@ -1508,10 +1544,15 @@ impl GraphOps {
                     .bind_groups
                     .insert(naga::ShaderStage::Compute, comp_groups);
 
-                // TODO how to compute workgroup count
                 op_state.workgroup_count = Some([1, 1, 1]);
             }
             NodeOpId::NoOp => unreachable!(),
+        }
+
+        if let Some(preprocess) = self.node_preprocess_fns.get(&node_id) {
+            let ctx = resource_ctx.node_ctx(&self, schema, node_id);
+            let op_state = self.node_op_state.get_mut(&node_id).unwrap();
+            preprocess(&ctx, op_state);
         }
 
         Ok(true)
@@ -1882,7 +1923,7 @@ pub struct NodeOpState {
     pub push_constants: FxHashMap<naga::ShaderStage, PushConstants>,
 
     // only used by compute
-    workgroup_count: Option<[u32; 3]>,
+    pub workgroup_count: Option<[u32; 3]>,
 }
 
 impl NodeOpState {

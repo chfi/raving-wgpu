@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::atomic::AtomicBool};
 use std::sync::Arc;
 
 use anyhow::Result;
-use raving_wgpu::dfrog::{ResourceMeta, SocketMetadataSource};
+use raving_wgpu::dfrog::{NodeCtx, ResourceMeta, SocketMetadataSource, NodeOpState};
 use raving_wgpu::{
     shader::render::{
         FragmentShader, FragmentShaderInstance, GraphicsPipeline, VertexShader,
@@ -133,12 +133,13 @@ impl GameOfLife {
                         | wgpu::BufferUsages::UNIFORM,
                 });
 
-            let secondary = state.device.create_buffer_init(&BufferInitDescriptor {
-                label: Some("secondary work buffer"),
-                contents: bytemuck::cast_slice(data.as_slice()),
-                usage: wgpu::BufferUsages::STORAGE
-                    | wgpu::BufferUsages::UNIFORM,
-            });
+            let secondary =
+                state.device.create_buffer_init(&BufferInitDescriptor {
+                    label: Some("secondary work buffer"),
+                    contents: bytemuck::cast_slice(data.as_slice()),
+                    usage: wgpu::BufferUsages::STORAGE
+                        | wgpu::BufferUsages::UNIFORM,
+                });
 
             (primary, secondary)
         };
@@ -187,6 +188,20 @@ impl GameOfLife {
         let draw_n = graph.add_node(draw_view_schema);
 
         let comp_n = graph.add_node(comp_schema);
+
+        {
+            let rows = cfg.rows;
+            let cols = cfg.columns;
+            graph.set_node_preprocess_fn(
+                comp_n,
+                move |ctx, op_state| {
+                    let [sx, sy, _] = ctx.workgroup_size.unwrap();
+                    let x = cols / sx;
+                    let y = rows / sy;
+                    op_state.workgroup_count = Some([x, y, 1]);
+                },
+            );
+        }
 
         graph.add_link_from_transient("vertex", draw_n, 0);
         graph.add_link_from_transient("swapchain", draw_n, 1);
