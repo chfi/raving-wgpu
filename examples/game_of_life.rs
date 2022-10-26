@@ -3,7 +3,9 @@ use std::{collections::HashMap, sync::atomic::AtomicBool};
 use std::sync::Arc;
 
 use anyhow::Result;
-use raving_wgpu::dfrog::{NodeCtx, ResourceMeta, SocketMetadataSource, NodeOpState};
+use raving_wgpu::dfrog::{
+    NodeCtx, NodeOpState, ResourceMeta, SocketMetadataSource,
+};
 use raving_wgpu::{
     shader::render::{
         FragmentShader, FragmentShaderInstance, GraphicsPipeline, VertexShader,
@@ -42,7 +44,9 @@ struct GameOfLife {
     graph: Graph,
     graph_scalars: rhai::Map,
 
-    // compute_node: NodeId,
+    running: bool,
+
+    compute_node: NodeId,
     view_node: NodeId,
 
     vertex_buffer: wgpu::Buffer,
@@ -184,25 +188,20 @@ impl GameOfLife {
                 //
             })?;
 
-        // 1 attachment output, 2
         let draw_n = graph.add_node(draw_view_schema);
-
         let comp_n = graph.add_node(comp_schema);
 
-        // graph.set_node_disabled(comp_n, true);
+        graph.set_node_disabled(comp_n, true);
 
         {
             let rows = cfg.rows;
             let cols = cfg.columns;
-            graph.set_node_preprocess_fn(
-                comp_n,
-                move |ctx, op_state| {
-                    let [sx, sy, _] = ctx.workgroup_size.unwrap();
-                    let x = cols / sx;
-                    let y = rows / sy;
-                    op_state.workgroup_count = Some([x, y, 1]);
-                },
-            );
+            graph.set_node_preprocess_fn(comp_n, move |ctx, op_state| {
+                let [sx, sy, _] = ctx.workgroup_size.unwrap();
+                let x = cols / sx;
+                let y = rows / sy;
+                op_state.workgroup_count = Some([x, y, 1]);
+            });
         }
 
         graph.add_link_from_transient("vertex", draw_n, 0);
@@ -215,9 +214,9 @@ impl GameOfLife {
         graph.add_link_from_transient("src_world", comp_n, 1);
         graph.add_link_from_transient("dst_world", comp_n, 2);
 
-        // graph.add_link_from_transient("work", draw_n, 3);
-
         let mut result = GameOfLife {
+            running: false,
+
             graph_scalars: rhai::Map::default(),
             vertex_buffer,
             cfg_buffer,
@@ -230,6 +229,7 @@ impl GameOfLife {
             // world,
             graph,
 
+            compute_node: comp_n,
             view_node: draw_n,
 
             iteration_step: 0,
@@ -322,6 +322,10 @@ impl GameOfLife {
                 log::error!("graph validation error");
             }
 
+            if self.running {
+                self.graph.set_node_disabled(self.compute_node, false);
+            }
+
             // log::warn!("executing graph");
             let sub_index = self
                 .graph
@@ -332,6 +336,12 @@ impl GameOfLife {
                 .poll(wgpu::MaintainBase::WaitForSubmissionIndex(sub_index));
 
             output.present();
+
+            if self.running {
+                self.graph.set_node_disabled(self.compute_node, true);
+                self.running = false;
+                self.iteration_step += 1;
+            }
         } else {
             state.resize(state.size);
         }
@@ -359,6 +369,10 @@ async fn run() -> anyhow::Result<()> {
                 WindowEvent::KeyboardInput { input, .. } => {
                     use VirtualKeyCode as Key;
                     if let Some(code) = input.virtual_keycode {
+                        if let Key::Escape = code {
+                            *control_flow = ControlFlow::Exit;
+                        }
+
                         if let Key::Up = code {
                             gol.cfg.scale += 0.5;
                             // gol.cfg.scale = gol.cfg.scale.max(1.0);
@@ -366,18 +380,17 @@ async fn run() -> anyhow::Result<()> {
                             gol.cfg.scale -= 0.5;
                             gol.cfg.scale = gol.cfg.scale.max(1.0);
                         }
+
+                        if let Key::Space = code {
+                            if input.state == ElementState::Pressed {
+                                gol.running = true;
+                            }
+                        }
                     }
                 }
-                WindowEvent::CloseRequested
-                | WindowEvent::KeyboardInput {
-                    input:
-                        KeyboardInput {
-                            state: ElementState::Pressed,
-                            virtual_keycode: Some(VirtualKeyCode::Escape),
-                            ..
-                        },
-                    ..
-                } => *control_flow = ControlFlow::Exit,
+                WindowEvent::CloseRequested => {
+                    *control_flow = ControlFlow::Exit
+                }
                 WindowEvent::Resized(physical_size) => {
                     // for some reason i get a validation error if i actually attempt
                     // to execute the first resize
@@ -397,25 +410,6 @@ async fn run() -> anyhow::Result<()> {
                 let size = [w_size.width, w_size.height];
 
                 gol.render(&mut state, size).unwrap();
-
-                // state.update();
-                /*
-                match state.render() {
-                    Ok(_) => {}
-                    // Reconfigure the surface if it's lost or outdated
-                    Err(
-                        wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated,
-                    ) => state.resize(state.size),
-                    // The system is out of memory, we should probably quit
-                    Err(wgpu::SurfaceError::OutOfMemory) => {
-                        *control_flow = ControlFlow::Exit
-                    }
-                    // We're ignoring timeouts
-                    Err(wgpu::SurfaceError::Timeout) => {
-                        log::warn!("Surface timeout")
-                    }
-                }
-                 */
             }
             Event::MainEventsCleared => {
                 // RedrawRequested will only trigger once, unless we manually

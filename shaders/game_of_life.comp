@@ -50,13 +50,23 @@ void set_alive_in_block(out uint block, uint col, uint row) {
     block |= (1 << loc_i);
 }
 
-// shared 
+uint get_alive(uint col, uint row) {
+    uint blk_i = block_index_for_cell(uvec2(col, row));
+    uint block = src.blocks[blk_i];
+    return uint(get_alive_in_block(block, col, row));
+}
+
+shared uint LOCAL_BLOCK;
 
 void main() {
     uvec2 cell = gl_GlobalInvocationID.xy;
 
     if (cell.x >= config.columns || cell.y >= config.rows) {
         return;
+    }
+
+    if (gl_LocalInvocationID.xy == uvec2(0, 0)) {
+        LOCAL_BLOCK = 0;
     }
 
     uint blk_index = block_index_for_cell(cell);
@@ -66,8 +76,64 @@ void main() {
         dst.blocks[blk_index] = 0;
     }
 
-    // groupMemoryBarrier();
+    uint tl = (cell.x == 0 || cell.y == 0)
+                ? 0
+                : get_alive(cell.x - 1, cell.y - 1);
+    uint tc = (cell.y == 0) ? 0 : get_alive(cell.x, cell.y - 1);
+    uint tr = (cell.x >= config.columns || cell.y == 0)
+                ? 0
+                : get_alive(cell.x + 1, cell.y - 1);
+                
+
+    uint ml = (cell.x == 0)
+                ? 0
+                : get_alive(cell.x - 1, cell.y);
+    // uint mc = (cell.y == 0) ? 0 : get_alive(cell.x, cell.y - 1);
+    uint mr = (cell.x >= config.columns)
+                ? 0
+                : get_alive(cell.x + 1, cell.y);
+
+    uint bl = (cell.x == 0 || cell.y >= config.rows)
+                ? 0
+                : get_alive(cell.x - 1, cell.y + 1);
+    uint bc = (cell.y == 0) ? 0 : get_alive(cell.x, cell.y + 1);
+    uint br = (cell.x >= config.columns || cell.y == config.rows)
+                ? 0
+                : get_alive(cell.x + 1, cell.y + 1);
+
+    bool is_alive = get_alive(cell.x, cell.y) == 0;
+
+    uint neighbors = tl + tc + tr + ml + mr + bl + bc + br;
+
+    bool new_state = is_alive;
+
+    if (is_alive) {
+        if (neighbors < 2) {
+            new_state = false;
+        } else if (neighbors < 4) {
+            new_state = true;
+        } else {
+            new_state = false;
+        }
+    } else {
+        new_state = neighbors == 3;
+    }
+
+    if (new_state) {
+        set_alive_in_block(LOCAL_BLOCK, 
+                            cell.x % BLOCK_COLUMNS, 
+                            cell.y % BLOCK_ROWS);
+    }
+    
     // memoryBarrierShared();
+    // groupMemoryBarrier();
+
+
+    if (cell.x % 8 == 0 && cell.y % 4 == 0) {
+        dst.blocks[blk_index] |= LOCAL_BLOCK;
+        // atomicOr(dst.blocks[blk_index], LOCAL_BLOCK);
+    }
+
     // memoryBarrierBuffer();
 
     // bool alive = (cell.x + cell.y) % 11 == 0;
