@@ -446,8 +446,8 @@ pub enum Resource {
 
 pub struct Node {
     schema: NodeSchemaId,
-
     links: Vec<(LocalSocketIx, (NodeId, LocalSocketIx))>,
+    disabled: bool,
 }
 
 pub struct Graph {
@@ -589,6 +589,7 @@ impl Graph {
         let node = Node {
             schema,
             links: Vec::new(),
+            disabled: false,
         };
 
         self.nodes.push(node);
@@ -605,6 +606,10 @@ impl Graph {
     ) {
         let node = &mut self.nodes[src.0];
         node.links.push((src_socket, (dst, dst_socket)));
+    }
+
+    pub fn set_node_disabled(&mut self, node: NodeId, disabled: bool) {
+        self.nodes[node.0].disabled = disabled;
     }
 
     pub fn add_link_from_transient(
@@ -952,10 +957,12 @@ impl Graph {
         );
 
         for node_id in topo_order.iter() {
-            //
-            // println!("executing node {}", node_id.0);
             let node = &self.nodes[node_id.0];
             let schema = &self.schemas[node.schema.0];
+
+            if node.disabled {
+                continue;
+            }
 
             self.ops.execute_node(
                 &resource_ctx,

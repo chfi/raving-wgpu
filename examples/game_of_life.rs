@@ -189,6 +189,8 @@ impl GameOfLife {
 
         let comp_n = graph.add_node(comp_schema);
 
+        // graph.set_node_disabled(comp_n, true);
+
         {
             let rows = cfg.rows;
             let cols = cfg.columns;
