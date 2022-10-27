@@ -292,8 +292,8 @@ impl GameOfLife {
         let view = ViewMachine::new(0.95, 0.0, 0.0);
 
         let cfg = Config {
-            columns: 128,
-            rows: 64,
+            columns: 32*100,
+            rows: 64*100,
 
             viewport_size: [800, 600],
 
@@ -465,11 +465,52 @@ impl GameOfLife {
                     pos_1,
                     delta_1,
                 } => {
+
+                    use ultraviolet::*;
+
+
                     let [x0, y0] = pos_0;
                     let [x1, y1] = pos_1;
 
+                    let p0 = Vec2::new(x0 as f32, y0 as f32);
+                    let p1 = Vec2::new(x1 as f32, y1 as f32);
+
                     let [dx0, dy0] = delta_0;
                     let [dx1, dy1] = delta_1;
+                    
+                    let d0 = Vec2::new(dx0 as f32, dy0 as f32);
+                    let d1 = Vec2::new(dx1 as f32, dy1 as f32);
+
+
+                    let diff_0 = p1 - p0;
+                    let dist_0 = diff_0.mag();
+
+                    let p0_ = p0 + d0;
+                    let p1_ = p1 + d1;
+
+                    let diff_1 = p1_ - p0_;
+                    let dist_1 = diff_1.mag();
+
+                    let mid = p0 + diff_0 * 0.5;
+                    let mid_ = p0_ + diff_1 * 0.5;
+
+
+                    let quot = dist_1 / dist_0;
+
+                    let new_scale = self.cfg.scale * quot as f32;
+
+                    let delta = mid_ - mid;
+
+                    self.view.x += delta.x;
+                    self.view.y += delta.y;
+                    self.view.prev_x = self.view.x;
+                    self.view.prev_y = self.view.y;
+
+                    self.cfg.scale = new_scale;
+
+                    // self.cfg.scale = self.cfg.scale.max(1.0);
+
+                    /*
 
                     let [d_x, d_y] = [x1 - x0, y1 - y0];
 
@@ -483,10 +524,14 @@ impl GameOfLife {
                     let [d_x, d_y] = [x1_ - x0_, y1_ - y0_];
                     let dist_1 = (d_x * d_x + d_y * d_y).sqrt();
 
-                    let quot = dist_1 / dist_0;
+                    let orig_x = self.view.x;
+                    let orig_y = self.view.y;
 
                     self.cfg.scale *= quot as f32;
                     self.cfg.scale = self.cfg.scale.max(1.0);
+                    */
+
+
                 }
             }
         }
