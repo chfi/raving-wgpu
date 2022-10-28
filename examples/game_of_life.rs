@@ -501,6 +501,15 @@ impl GameOfLife {
 
                     let delta = mid_ - mid;
 
+                    // let mid__ = mid * quot as f32;
+
+                    // let delta = mid__ - mid;
+
+                    let q = quot as f32;
+
+                    // let delta = Vec2::new(self.view.x * q, self.view.y * q);
+
+
                     self.view.x += delta.x;
                     self.view.y += delta.y;
                     self.view.prev_x = self.view.x;

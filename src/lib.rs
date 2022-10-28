@@ -13,6 +13,8 @@ pub mod graph;
 pub mod shader;
 pub mod texture;
 
+pub mod input;
+
 pub mod util;
 
 pub use graph::*;
