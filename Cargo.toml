@@ -48,3 +48,7 @@ path = "examples/simple_graph.rs"
 [[example]]
 name = "game_of_life"
 path = "examples/game_of_life.rs"
+
+[[example]]
+name = "genome_graph_2d"
+path = "examples/genome_graph_2d.rs"

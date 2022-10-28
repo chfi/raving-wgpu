@@ -1,33 +1,21 @@
-use std::collections::VecDeque;
-use std::{collections::HashMap, sync::atomic::AtomicBool};
-
-use std::sync::Arc;
+use std::{collections::HashMap};
 
 use anyhow::Result;
-use raving_wgpu::dfrog::{
-    NodeCtx, NodeOpState, ResourceMeta, SocketMetadataSource,
-};
+use raving_wgpu::input::{TouchHandler, TouchResult};
 use raving_wgpu::{
-    shader::render::{
-        FragmentShader, FragmentShaderInstance, GraphicsPipeline, VertexShader,
-        VertexShaderInstance,
-    },
     NodeId,
 };
-use raving_wgpu::{DataType, State};
-use rustc_hash::FxHashMap;
+use raving_wgpu::{State};
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
-    BufferUsages, Extent3d, ImageCopyTexture, Origin3d,
 };
-use winit::dpi::PhysicalPosition;
 use winit::event::{
-    ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent,
+    ElementState, Event, VirtualKeyCode, WindowEvent,
 };
 use winit::event_loop::ControlFlow;
 
 use raving_wgpu::graph::dfrog::{
-    Graph, InputResource, Node, NodeSchema, NodeSchemaId,
+    Graph, InputResource,
 };
 
 struct ViewMachine {
@@ -45,141 +33,6 @@ struct ViewMachine {
     touches: TouchHandler,
     // first_touch: Option<u64>,
     // touches: FxHashMap<u64, PhysicalPosition<f64>>,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct TouchState {
-    id: u64,
-    start: PhysicalPosition<f64>,
-    end: PhysicalPosition<f64>,
-}
-
-impl TouchState {
-    fn new(id: u64, start: PhysicalPosition<f64>) -> Self {
-        Self {
-            id,
-            start,
-            end: start,
-        }
-    }
-
-    fn reset_to(&mut self, start: PhysicalPosition<f64>) {
-        self.start = start;
-        self.end = start;
-    }
-
-    fn update_end(&mut self, end: PhysicalPosition<f64>) {
-        self.end = end;
-    }
-}
-
-#[derive(Default)]
-struct TouchHandler {
-    touches: VecDeque<TouchState>,
-    last_result: Option<TouchResult>,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum TouchResult {
-    Drag {
-        pos: [f64; 2],
-        delta: [f64; 2],
-    },
-    Pinch {
-        pos_0: [f64; 2],
-        delta_0: [f64; 2],
-        pos_1: [f64; 2],
-        delta_1: [f64; 2],
-    },
-}
-
-impl TouchHandler {
-    fn take(&mut self) -> Option<TouchResult> {
-        self.touches.iter_mut().for_each(|t| t.reset_to(t.end));
-        self.last_result.take()
-    }
-
-    fn handle_touch(
-        &mut self,
-        touch: &winit::event::Touch,
-    ) -> Option<TouchResult> {
-        use winit::event::TouchPhase;
-        let loc: winit::dpi::PhysicalPosition<f64> = touch.location;
-        // let pos = [loc.x, loc.y];
-        let id = touch.id;
-
-        // let touch_count = self.touches.len();
-
-        match touch.phase {
-            TouchPhase::Started => {
-                let state = TouchState::new(id, loc);
-                self.touches.push_back(state);
-                None
-            }
-            TouchPhase::Moved => {
-                if let Some(state) = self.find_state_mut(touch.id) {
-                    state.update_end(touch.location);
-                }
-                let result = self.result();
-                self.last_result = result;
-                result
-            }
-            TouchPhase::Ended => {
-                self.remove_state(touch.id);
-                None
-            }
-            TouchPhase::Cancelled => {
-                self.remove_state(touch.id);
-                None
-            }
-        }
-    }
-
-    fn result(&self) -> Option<TouchResult> {
-        match self.touches.len() {
-            0 => None,
-            1 => {
-                let delta = self.touch_delta(0).unwrap();
-                let pos = self.touches[0].end;
-                Some(TouchResult::Drag {
-                    pos: [pos.x, pos.y],
-                    delta,
-                })
-            }
-            n => {
-                let delta_0 = self.touch_delta(0).unwrap();
-                let delta_1 = self.touch_delta(1).unwrap();
-                let p0 = self.touches[0].end;
-                let p1 = self.touches[1].end;
-
-                let pos_0 = [p0.x, p0.y];
-                let pos_1 = [p1.x, p1.y];
-                Some(TouchResult::Pinch {
-                    pos_0,
-                    delta_0,
-                    pos_1,
-                    delta_1,
-                })
-            }
-        }
-    }
-
-    fn touch_delta(&self, index: usize) -> Option<[f64; 2]> {
-        let touch = self.touches.get(index)?;
-        let x = touch.end.x - touch.start.x;
-        let y = touch.end.y - touch.start.y;
-        Some([x, y])
-    }
-
-    fn remove_state(&mut self, id: u64) {
-        if let Some(ix) = self.touches.iter().position(|s| s.id == id) {
-            self.touches.remove(ix);
-        }
-    }
-
-    fn find_state_mut(&mut self, id: u64) -> Option<&mut TouchState> {
-        self.touches.iter_mut().find(|s| s.id == id)
-    }
 }
 
 impl ViewMachine {
@@ -447,14 +300,14 @@ impl GameOfLife {
     fn update(&mut self, dt: f32) {
         let scale = self.cfg.scale;
 
-        if let Some(touch_result) = self.view.touches.take() {
+        if let Some(touch_result) = self.view.touches.take_current_result() {
             match touch_result {
                 TouchResult::Drag { pos, delta } => {
-                    let [x, y] = delta;
-                    let ax = delta[0] as f32 * scale;
-                    let ay = delta[1] as f32 * scale;
+                    // let [x, y] = delta;
+                    let ax = delta.x as f32 * scale;
+                    let ay = delta.y as f32 * scale;
 
-                    let a = y.atan2(x);
+                    let a = delta.y.atan2(delta.x);
 
                     self.view.ax = ax;
                     self.view.ay = ay;
@@ -465,22 +318,11 @@ impl GameOfLife {
                     pos_1,
                     delta_1,
                 } => {
+                    let p0 = pos_0;
+                    let p1 = pos_1;
 
-                    use ultraviolet::*;
-
-
-                    let [x0, y0] = pos_0;
-                    let [x1, y1] = pos_1;
-
-                    let p0 = Vec2::new(x0 as f32, y0 as f32);
-                    let p1 = Vec2::new(x1 as f32, y1 as f32);
-
-                    let [dx0, dy0] = delta_0;
-                    let [dx1, dy1] = delta_1;
-                    
-                    let d0 = Vec2::new(dx0 as f32, dy0 as f32);
-                    let d1 = Vec2::new(dx1 as f32, dy1 as f32);
-
+                    let d0 = delta_0;
+                    let d1 = delta_1;
 
                     let diff_0 = p1 - p0;
                     let dist_0 = diff_0.mag();
@@ -510,8 +352,8 @@ impl GameOfLife {
                     // let delta = Vec2::new(self.view.x * q, self.view.y * q);
 
 
-                    self.view.x += delta.x;
-                    self.view.y += delta.y;
+                    self.view.x += delta.x as f32;
+                    self.view.y += delta.y as f32;
                     self.view.prev_x = self.view.x;
                     self.view.prev_y = self.view.y;
 
