@@ -13,6 +13,7 @@ pub mod graph;
 pub mod shader;
 pub mod texture;
 
+pub mod camera;
 pub mod input;
 
 pub mod util;

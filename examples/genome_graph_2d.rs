@@ -1,8 +1,17 @@
 
+use ultraviolet::Vec2;
 use winit::event::{
     ElementState, Event, VirtualKeyCode, WindowEvent,
 };
 use winit::event_loop::ControlFlow;
+
+
+
+pub struct GraphLayout {
+    positions: Vec<Vec2>,
+}
+
+
 
 async fn run() -> anyhow::Result<()> {
     let (event_loop, window, mut state) = raving_wgpu::initialize().await?;
