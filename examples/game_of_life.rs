@@ -224,7 +224,7 @@ impl GameOfLife {
             ));
             let frag_src = include_bytes!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/shaders/game_of_life.frag.spv"
+                "/shaders/examples/game_of_life.frag.spv"
             ));
 
             graph.add_graphics_schema(
@@ -238,7 +238,7 @@ impl GameOfLife {
 
         let comp_src = include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/shaders/game_of_life.comp.spv"
+            "/shaders/examples/game_of_life.comp.spv"
         ));
 
         let comp_schema =
