@@ -19,8 +19,8 @@ layout(set = 0, binding = 1) buffer GameWorld {
     uint blocks[];
 } world;
 
-#define BLOCK_COLUMNS 8
-#define BLOCK_ROWS 4
+#define BLOCK_COLUMNS 4
+#define BLOCK_ROWS 8
 
 vec2 cell_pt_at_px(vec2 px) {
     return config.view_offset + px / config.scale;
@@ -34,7 +34,8 @@ void main() {
     uint col = uint(floor(cell_pt.x));
     uint row = uint(floor(cell_pt.y));
 
-    bool in_world = col < config.columns && row < config.rows;
+    bool in_world = (col < config.columns && row < config.rows)
+                    && cell_pt.x > 0.0 && cell_pt.y > 0.0;
 
     if (!in_world) {
         f_color = vec4(0.0, 0.0, 0.0, 1.0);
