@@ -28,9 +28,6 @@ var<storage, read> src: array<atomic<u32>>;
 @group(1) @binding(1)
 var<storage, read_write> dst: array<atomic<u32>>;
 
-var<workgroup> workcells: array<atomic<u32>, 2>;
-var<workgroup> neighborhood: array<atomic<u32>, 10>;
-
 fn load_block(blk_i: vec2<i32>) -> u32 {
     if blk_i.x < 0 || blk_i.y < 0
         || blk_i.x > i32(config.columns)
@@ -42,72 +39,116 @@ fn load_block(blk_i: vec2<i32>) -> u32 {
     return atomicLoad(&src[ix]);
 }
 
-// fn load_blocks_horiz(blk_i: vec2<i32>) -> vec4<u32> {
-// }
+fn load_blocks_horiz(blk_i: vec2<i32>) -> vec4<u32> {
+    let x = vec2<i32>(1, 0);
+    let a = load_block(blk_i);
+    let b = load_block(blk_i + x);
+    let c = load_block(blk_i + x + x);
+    let d = load_block(blk_i + x + x + x);
+    return vec4<u32>(a, b, c, d);
+}
+
+fn block_pos_for_cell(cell: vec2<u32>) -> vec2<u32> {
+    let blk = vec2<u32>(cell.x / BLOCK_COLUMNS, cell.y / BLOCK_ROWS);
+    return blk;
+}
 
 fn block_index_for_cell(cell: vec2<u32>) -> u32 {
     let block_cols = config.columns / BLOCK_COLUMNS;
-    let blk = vec2<u32>(cell.x / BLOCK_COLUMNS, cell.y / BLOCK_ROWS);
+    let blk = block_pos_for_cell(cell);
     return blk.x + blk.y * block_cols;
 }
+
+
+var<workgroup> nhood: array<array<atomic<u32>, 4>, 3>;
+
+fn store_nhood_row(
+    row: u32,
+    vals: vec4<u32>,
+) {
+    let row = row % 3u;
+    atomicStore(&nhood[row][0u], vals[0u]);
+    atomicStore(&nhood[row][1u], vals[1u]);
+    atomicStore(&nhood[row][2u], vals[2u]);
+    atomicStore(&nhood[row][3u], vals[3u]);
+}
+
+fn get_alive_local(local_pos: vec2<u32>, offset: vec2<i32>) -> bool {
+    // get the block
+    // we store 12 blocks locally;
+    // our coordinate space is X = [0..16], Y = [0..24]
+    
+
+    return true;
+}
+
+// `local_pos` is the local invocation ID, so in the [0..8] square
+fn get_alive_neighbors(local_pos: vec2<u32>) -> u32 {
+    let loc = vec2<i32>(local_pos);
+
+    let it_l = loc + vec2(-1, -1);
+    let it_c = loc + vec2(0, -1);
+    let it_r = loc + vec2(1, -1);
+
+    let im_l = loc + vec2(-1, 0);
+    let im_c = loc + vec2(0, 0);
+    let im_r = loc + vec2(1, 0);
+
+    let ib_l = loc + vec2(-1, 1);
+    let ib_c = loc + vec2(0, 1);
+    let ib_r = loc + vec2(1, 1);
+
+    return 0u;
+}
+
 
 @compute @workgroup_size(8, 8, 1)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>,
         @builtin(local_invocation_id) local_id: vec3<u32>) {
     let size = config.columns * config.rows;
-    let ix = global_id.x + global_id.y * config.columns;
+    let cell_ix = global_id.x + global_id.y * config.columns;
 
-    if ix > size {
+    if cell_ix > size {
         return;
     }
-
-    // let ix = ix % size;
 
     let cell = global_id.xy;
 
     let loc = local_id;
 
-    // let blk_ix = block_index_for_cell(cell);
+    // let blk_loc = cell / vec2<u32>(config.columns, config.rows);
 
-    // atomicMax(&dst[blk_ix], ix);
+    let blk_loc = block_pos_for_cell(cell);
+    let blk_ix = block_index_for_cell(cell);
 
+    if loc.x == 0u && loc.y == 0u && loc.z == 0u {
+        let blk_pos = vec2<i32>(blk_loc);
 
-    if loc.y == 0u && loc.y == 0u {
+        let mid_left = blk_pos - vec2<i32>(1, 0);
+        let top_left = mid_left - vec2<i32>(0, 1);
+        let btm_left = mid_left + vec2<i32>(0, 1);
 
-        if loc.x == 0u {
-            atomicStore(&dst[ix], !0u);
-        } else if loc.x == 1u {
-            atomicStore(&dst[ix], 1u + 3u + 5u + 7u + 9u + 11u);
-        }
+        let top_row = load_blocks_horiz(top_left);
+        let mid_row = load_blocks_horiz(mid_left);
+        let btm_row = load_blocks_horiz(btm_left);
+        store_nhood_row(0u, top_row);
+        store_nhood_row(1u, mid_row);
+        store_nhood_row(2u, btm_row);
     }
-
 
     workgroupBarrier();
 
-    // let lol = 5u - 1u;
-
-    // var val = pack4x8snorm(vec4<f32>(0.1, 0.3, 0.5, 0.7));
-    // val -= 1u;
-
-    // if local_id.y > 0u {
-        // return;
-    // }
-
-    // atomicStore(&dst[ix], ix);
+    if loc.x == 0u && loc.y == 0u && loc.z == 0u {
+        let ix = 1u + loc.x;
+        
+        let val_0 = atomicLoad(&nhood[1u][1u]);
+        let val_1 = atomicLoad(&nhood[1u][2u]);
+        atomicStore(&dst[blk_ix], val_0);
+        // let i = blk_ix + 
+        atomicStore(&dst[blk_ix+1u], val_1);
+    }
 
 }
-
-
-// fn is_in_bounds_relative(origin: vec2<u32>, delta: vec2<i32>) -> bool {
-    // return left;
-// }
-
-fn load_block_relative(origin_blk: vec2<u32>, delta: vec2<i32>) -> u32 {
-    // let in_bounds = is_in_bounds_relative(origin, delta);
-
-    return 0u;
-}
-
 
 fn get_alive_in_block(blck: u32, col: u32, row: u32) -> bool {
     let loc = vec2<u32>(col % BLOCK_COLUMNS, row % BLOCK_ROWS);
