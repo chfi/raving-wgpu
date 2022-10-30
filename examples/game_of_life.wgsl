@@ -98,7 +98,7 @@ fn get_alive_in_block(blck: u32, col: u32, row: u32) -> u32 {
 }
 
 fn get_local_alive_entry(entry: vec4<u32>) -> u32 {
-    let blck = atomicLoad(&nhood[entry.x][entry.y]);
+    let blck = atomicLoad(&nhood[entry.y][entry.x]);
     return get_alive_in_block(blck, entry.z, entry.w);
 }
 
@@ -106,14 +106,14 @@ fn set_local_alive(local_pos: vec2<i32>) {
     let entry = local_to_nhood(local_pos);
     let inner_ix = (entry.z + entry.w * BLOCK_COLUMNS) % 32u;
     let val = 1u << inner_ix;
-    atomicOr(&nhood[entry.x][entry.y], val);
+    atomicOr(&nhood[entry.y][entry.x], val);
 }
 
 fn set_local_dead(local_pos: vec2<i32>) {
     let entry = local_to_nhood(local_pos);
     let inner_ix = (entry.z + entry.w * BLOCK_COLUMNS) % 32u;
     let val = !(1u << inner_ix);
-    atomicAnd(&nhood[entry.x][entry.y], val);
+    atomicAnd(&nhood[entry.y][entry.x], val);
 }
 
 
