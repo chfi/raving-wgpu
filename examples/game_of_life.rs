@@ -249,6 +249,7 @@ impl GameOfLife {
         let alt_comp_n = graph.add_node(alt_comp_schema);
 
         graph.set_node_disabled(comp_n, true);
+        graph.set_node_disabled(alt_comp_n, true);
 
         {
             let rows = cfg.rows;
@@ -483,7 +484,7 @@ impl GameOfLife {
             }
 
             if self.running {
-                self.graph.set_node_disabled(self.compute_node, false);
+                self.graph.set_node_disabled(self.alt_compute_node, false);
             }
 
             // log::warn!("executing graph");
@@ -498,7 +499,7 @@ impl GameOfLife {
             output.present();
 
             if self.running {
-                self.graph.set_node_disabled(self.compute_node, true);
+                self.graph.set_node_disabled(self.alt_compute_node, true);
                 self.running = false;
                 self.iteration_step += 1;
             }
