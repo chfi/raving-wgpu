@@ -1,22 +1,14 @@
-use std::{collections::HashMap};
+use std::collections::HashMap;
 
 use anyhow::Result;
 use raving_wgpu::input::{TouchHandler, TouchResult};
-use raving_wgpu::{
-    NodeId,
-};
-use raving_wgpu::{State};
-use wgpu::{
-    util::{BufferInitDescriptor, DeviceExt},
-};
-use winit::event::{
-    ElementState, Event, VirtualKeyCode, WindowEvent,
-};
+use raving_wgpu::NodeId;
+use raving_wgpu::State;
+use wgpu::util::{BufferInitDescriptor, DeviceExt};
+use winit::event::{ElementState, Event, VirtualKeyCode, WindowEvent};
 use winit::event_loop::ControlFlow;
 
-use raving_wgpu::graph::dfrog::{
-    Graph, InputResource,
-};
+use raving_wgpu::graph::dfrog::{Graph, InputResource};
 
 struct ViewMachine {
     prev_x: f32,
@@ -103,6 +95,7 @@ struct GameOfLife {
     running: bool,
 
     compute_node: NodeId,
+    alt_compute_node: NodeId,
     view_node: NodeId,
 
     vertex_buffer: wgpu::Buffer,
@@ -145,8 +138,8 @@ impl GameOfLife {
         let view = ViewMachine::new(0.95, 0.0, 0.0);
 
         let cfg = Config {
-            columns: 32*100,
-            rows: 64*100,
+            columns: 32 * 100,
+            rows: 64 * 100,
 
             viewport_size: [800, 600],
 
@@ -240,14 +233,20 @@ impl GameOfLife {
             env!("CARGO_MANIFEST_DIR"),
             "/shaders/examples/game_of_life.comp.spv"
         ));
-
         let comp_schema =
             graph.add_custom_compute_schema(state, comp_src, |schema| {
                 //
             })?;
 
+        let alt_src =
+            concat!(env!("CARGO_MANIFEST_DIR"), "/examples/game_of_life.wgsl");
+        let alt_comp_schema =
+            graph.add_compute_schema_wgsl(&state, &alt_src)?;
+
         let draw_n = graph.add_node(draw_view_schema);
         let comp_n = graph.add_node(comp_schema);
+
+        let alt_comp_n = graph.add_node(alt_comp_schema);
 
         graph.set_node_disabled(comp_n, true);
 
@@ -255,6 +254,13 @@ impl GameOfLife {
             let rows = cfg.rows;
             let cols = cfg.columns;
             graph.set_node_preprocess_fn(comp_n, move |ctx, op_state| {
+                let [sx, sy, _] = ctx.workgroup_size.unwrap();
+                let x = cols / sx;
+                let y = rows / sy;
+                op_state.workgroup_count = Some([x, y, 1]);
+            });
+
+            graph.set_node_preprocess_fn(alt_comp_n, move |ctx, op_state| {
                 let [sx, sy, _] = ctx.workgroup_size.unwrap();
                 let x = cols / sx;
                 let y = rows / sy;
@@ -271,6 +277,10 @@ impl GameOfLife {
         graph.add_link_from_transient("cfg", comp_n, 0);
         graph.add_link_from_transient("src_world", comp_n, 1);
         graph.add_link_from_transient("dst_world", comp_n, 2);
+
+        graph.add_link_from_transient("cfg", alt_comp_n, 0);
+        graph.add_link_from_transient("src_world", alt_comp_n, 1);
+        graph.add_link_from_transient("dst_world", alt_comp_n, 2);
 
         let mut result = GameOfLife {
             view,
@@ -289,6 +299,7 @@ impl GameOfLife {
             graph,
 
             compute_node: comp_n,
+            alt_compute_node: alt_comp_n,
             view_node: draw_n,
 
             iteration_step: 0,
@@ -336,7 +347,6 @@ impl GameOfLife {
                     let mid = p0 + diff_0 * 0.5;
                     let mid_ = p0_ + diff_1 * 0.5;
 
-
                     let quot = dist_1 / dist_0;
 
                     let new_scale = self.cfg.scale * quot as f32;
@@ -350,7 +360,6 @@ impl GameOfLife {
                     let q = quot as f32;
 
                     // let delta = Vec2::new(self.view.x * q, self.view.y * q);
-
 
                     self.view.x += delta.x as f32;
                     self.view.y += delta.y as f32;
@@ -381,8 +390,6 @@ impl GameOfLife {
                     self.cfg.scale *= quot as f32;
                     self.cfg.scale = self.cfg.scale.max(1.0);
                     */
-
-
                 }
             }
         }

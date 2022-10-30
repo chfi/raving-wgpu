@@ -354,6 +354,28 @@ impl GroupBindings {
                         let ty = wgpu::BindingType::Sampler(binding_type);
                         (ty, None)
                     }
+                    naga::TypeInner::Array { base, size, stride } => {
+                        use naga::AddressSpace as Space;
+                        dbg!(space);
+                        let binding_ty =
+                            if let Space::Storage { access } = space {
+                                let read_only = !access
+                                    .contains(naga::StorageAccess::STORE);
+                                wgpu::BufferBindingType::Storage { read_only }
+                            } else if let Space::Uniform = space {
+                                wgpu::BufferBindingType::Uniform
+                            } else {
+                                unreachable!();
+                            };
+                        
+                        let ty = wgpu::BindingType::Buffer {
+                            ty: binding_ty,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        };
+
+                        (ty, None)
+                    }
                     e => {
                         panic!("unimplemented: {:?}", e);
                     }

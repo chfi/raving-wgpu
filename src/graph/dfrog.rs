@@ -666,6 +666,41 @@ impl Graph {
         Ok(schema_id)
     }
 
+    pub fn add_compute_schema_wgsl(
+        &mut self,
+        state: &State,
+        comp_path: &str,
+    ) -> Result<NodeSchemaId> {
+        use std::io::prelude::*;
+        use std::fs::File;
+
+        let mut shader_file = File::open(comp_path)?;
+        let mut shader_src = String::new();
+        shader_file.read_to_string(&mut shader_src)?;
+
+        let schema_id = NodeSchemaId(self.schemas.len());
+        let result =
+            self.ops.create_compute_schema_wgsl(state, &shader_src, schema_id);
+
+        let schema = match result {
+            Ok(schema) => schema,
+            Err(err) => {
+                log::error!("Error in compute module for `{comp_path}`");
+                
+                log::error!("error!! {err:#?}");
+
+                let root = err.root_cause();
+                log::error!("root cause!! {root:#?}");
+
+
+                anyhow::bail!(err);
+            }
+        };
+        self.schemas.push(schema);
+
+        Ok(schema_id)
+    }
+
     pub fn add_custom_compute_schema<'a, F>(
         &mut self,
         state: &State,
