@@ -1731,14 +1731,11 @@ impl GraphOps {
         Ok(true)
     }
 
-    pub fn create_compute_schema(
+    fn create_compute_schema_impl(
         &mut self,
-        state: &State,
-        comp_src: &[u8],
+        comp: ComputeShader,
         schema_id: NodeSchemaId,
     ) -> Result<NodeSchema> {
-        let comp = ComputeShader::from_spirv(&state, comp_src, "main")?;
-
         let op_id = NodeOpId::Compute(self.compute.len());
 
         let mut socket_names = Vec::new();
@@ -1781,6 +1778,26 @@ impl GraphOps {
         self.schema_ops.insert(schema_id, op_id);
 
         Ok(schema)
+    }
+    
+    pub fn create_compute_schema_wgsl(
+        &mut self,
+        state: &State,
+        comp_src: &str,
+        schema_id: NodeSchemaId,
+    ) -> Result<NodeSchema> {
+        let comp = ComputeShader::from_wgsl(&state, comp_src, "main")?;
+        self.create_compute_schema_impl(comp, schema_id)
+    }
+
+    pub fn create_compute_schema(
+        &mut self,
+        state: &State,
+        comp_src: &[u8],
+        schema_id: NodeSchemaId,
+    ) -> Result<NodeSchema> {
+        let comp = ComputeShader::from_spirv(&state, comp_src, "main")?;
+        self.create_compute_schema_impl(comp, schema_id)
     }
 
     pub fn create_graphics_schema<'a>(
