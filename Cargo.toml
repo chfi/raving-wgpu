@@ -10,6 +10,11 @@ winit = "0.27"
 env_logger = "0.9"
 log = "0.4"
 
+gilrs = "0.9.0"
+pasts = "0.8"
+stick = "0.12"
+fishsticks = "0.2"
+
 wgpu = { version = "0.14", features = ["spirv"] }
 naga = { version = "0.10", features = ["clone", "spv-in", "glsl-in", "spv-out"] }
 
@@ -36,6 +41,10 @@ rand = "0.8.5"
 [[example]]
 name = "triangle"
 path = "examples/triangle.rs"
+
+[[example]]
+name = "polyline"
+path = "examples/polyline.rs"
 
 [[example]]
 name = "shader_reflect"

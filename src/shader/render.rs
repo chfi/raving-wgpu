@@ -116,6 +116,7 @@ impl GraphicsPipeline {
 
         let primitive = wgpu::PrimitiveState {
             topology: wgpu::PrimitiveTopology::TriangleList,
+            // topology: wgpu::PrimitiveTopology::LineList,
             front_face: wgpu::FrontFace::Ccw,
             cull_mode: None,
             polygon_mode: wgpu::PolygonMode::Fill,

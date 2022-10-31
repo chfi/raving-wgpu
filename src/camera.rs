@@ -25,6 +25,11 @@ impl DynamicCamera2d {
         self.accel = Vec2::zero();
     }
 
+    pub fn stop(&mut self) {
+        self.prev_center = self.center;
+        self.accel = Vec2::zero();
+    }
+
     pub fn to_matrix(&self) -> Mat4 {
         let p = self.center;
         let size = self.size;
@@ -32,13 +37,16 @@ impl DynamicCamera2d {
         let min = p - size * 0.5;
         let max = p + size * 0.5;
 
+        dbg!(min);
+        dbg!(max);
+
         let left = min.x;
         let right = max.x;
         let bottom = min.y;
         let top = max.y;
 
-        let near = 1.0;
-        let far = 1000.0;
+        let near = 1000.0;
+        let far = 1.0;
 
         ultraviolet::projection::rh_yup::orthographic_wgpu_dx(
             left, right, bottom, top, near, far,

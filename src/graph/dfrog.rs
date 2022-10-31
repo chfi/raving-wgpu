@@ -1726,10 +1726,13 @@ impl GraphOps {
                             stride.expect("vertex buffer needs stride to draw");
 
                         let count = (size / stride) as u32;
+                        // ((0..6), (0..count))
                         ((0..count), (0..1))
                     };
+                    dbg!((&vertices, &instances));
 
                     op_state.set_render_push_constants(&mut pass);
+
 
                     pass.draw(vertices, instances);
                 }
@@ -1853,6 +1856,7 @@ impl GraphOps {
         let vert_inst = VertexShaderInstance::from_shader_single_buffer(
             &vert,
             wgpu::VertexStepMode::Vertex,
+            // wgpu::VertexStepMode::Instance,
         );
 
         let frag_inst =
