@@ -29,7 +29,8 @@ void main() {
 
   v_segment_ix = gl_InstanceIndex;
 
-  float w = in_uniform.line_width / 100.0;
+  // float w = in_uniform.line_width / 100.0;
+  float w = 0.1;
   vec4 a = p0 + n_u * w;
   vec4 b = p1 + n_u * w;
   vec4 c = p1 - n_u * w;

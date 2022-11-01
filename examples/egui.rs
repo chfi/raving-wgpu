@@ -1,3 +1,4 @@
+use wgpu::Maintain;
 use winit::event::{ElementState, Event, VirtualKeyCode, WindowEvent};
 use winit::event_loop::ControlFlow;
 
@@ -15,13 +16,15 @@ async fn run() -> Result<()> {
     let output_depth_format = wgpu::TextureFormat::Depth32Float;
     let msaa_samples = 1;
 
-    let renderer = egui_wgpu::Renderer::new(
+    let mut renderer = egui_wgpu::Renderer::new(
         &state.device,
         output_color_format,
-        // None,
-        Some(output_depth_format),
+        None,
+        // Some(output_depth_format),
         msaa_samples,
     );
+
+    let mut clipped_primitives = Vec::new();
 
     // let rpass = egui_wgpu::
 
@@ -102,12 +105,143 @@ async fn run() -> Result<()> {
                 // let size = [w_size.width, w_size.height];
                 // gol.render(&mut state, size).unwrap();
 
+                state.device.poll(Maintain::Wait);
+
+                if let Ok(output) = state.surface.get_current_texture() {
+                    let output_view = output
+                        .texture
+                        .create_view(&wgpu::TextureViewDescriptor::default());
+
+                    // let mut transient_res: HashMap<String, InputResource<'_>> =
+                    // HashMap::default();
+
+                    {
+                        // let w_size = window.inner_size();
+                        // let size = [w_size.width, w_size.height];
+                        // let size = window_dims;
+
+                        // let format = state.surface_format;
+                    }
+
+                    // log::warn!("executing graph");
+
+                    // if !clipped_primitives.is_empty() {
+                    // }
+                    let mut encoder = state.device.create_command_encoder(
+                        &wgpu::CommandEncoderDescriptor {
+                            label: Some("egui render"),
+                        },
+                    );
+                    {
+                        let mut render_pass = encoder.begin_render_pass(
+                            &wgpu::RenderPassDescriptor {
+                                color_attachments: &[Some(
+                                    wgpu::RenderPassColorAttachment {
+                                        view: &output_view,
+                                        resolve_target: None,
+                                        ops: wgpu::Operations {
+                                            load: wgpu::LoadOp::Clear(
+                                                wgpu::Color {
+                                                    r: 0.0,
+                                                    g: 0.0,
+                                                    b: 0.0,
+                                                    a: 1.0,
+                                                },
+                                            ),
+                                            store: true,
+                                        },
+                                    },
+                                )],
+                                depth_stencil_attachment: None,
+                                label: Some("egui_render"),
+                            },
+                        );
+
+                        let size = window.inner_size();
+                        let pixels_per_point = egui_state.pixels_per_point();
+
+                        let screen_descriptor =
+                            egui_wgpu::renderer::ScreenDescriptor {
+                                size_in_pixels: [size.width, size.height],
+                                pixels_per_point,
+                            };
+
+                        renderer.render(
+                            &mut render_pass,
+                            &clipped_primitives,
+                            &screen_descriptor,
+                        );
+                        
+                    }
+
+                    state.queue.submit(Some(encoder.finish()));
+                    output.present();
+                } else {
+                    state.resize(state.size);
+                }
 
                 // renderer.update_texture(device, queue, id, image_delta)
             }
             Event::MainEventsCleared => {
                 let dt = prev_frame_t.elapsed().as_secs_f32();
                 prev_frame_t = std::time::Instant::now();
+
+                let raw_input = egui_state.take_egui_input(&window);
+                let full_output = egui_ctx.run(raw_input, |ctx| {
+                    egui::CentralPanel::default().show(&ctx, |ui| {
+                        ui.label("hello world");
+                    });
+                });
+
+                egui_state.handle_platform_output(
+                    &window,
+                    &egui_ctx,
+                    full_output.platform_output,
+                );
+
+                let clipped = egui_ctx.tessellate(full_output.shapes);
+                clipped_primitives = clipped;
+
+                {
+                    let mut encoder = state.device.create_command_encoder(
+                        &wgpu::CommandEncoderDescriptor {
+                            label: Some("egui updates"),
+                        },
+                    );
+
+                    let size = window.inner_size();
+                    let pixels_per_point = egui_state.pixels_per_point();
+
+                    let screen_descriptor =
+                        egui_wgpu::renderer::ScreenDescriptor {
+                            size_in_pixels: [size.width, size.height],
+                            pixels_per_point,
+                        };
+
+                    renderer.update_buffers(
+                        &state.device,
+                        &state.queue,
+                        &mut encoder,
+                        &clipped_primitives,
+                        &screen_descriptor,
+                    );
+
+                    for (id, image_delta) in &full_output.textures_delta.set {
+                        log::warn!("updating texture {id:?}");
+                        renderer.update_texture(
+                            &state.device,
+                            &state.queue,
+                            *id,
+                            image_delta,
+                        );
+                    }
+
+                    for id in &full_output.textures_delta.free {
+                        renderer.free_texture(id);
+                    }
+
+                    state.queue.submit(Some(encoder.finish()));
+                }
 
                 window.request_redraw();
             }
