@@ -6,27 +6,22 @@ use anyhow::Result;
 
 async fn run() -> Result<()> {
     let (event_loop, window, mut state) = raving_wgpu::initialize().await?;
-    // let size = window.inner_size();
 
     let mut egui_ctx = egui::Context::default();
 
     let mut egui_state = egui_winit::State::new(&event_loop);
 
     let output_color_format = state.surface_format;
-    let output_depth_format = wgpu::TextureFormat::Depth32Float;
     let msaa_samples = 1;
 
     let mut renderer = egui_wgpu::Renderer::new(
         &state.device,
         output_color_format,
         None,
-        // Some(output_depth_format),
         msaa_samples,
     );
 
     let mut clipped_primitives = Vec::new();
-
-    // let rpass = egui_wgpu::
 
     let mut first_resize = true;
 
@@ -37,6 +32,7 @@ async fn run() -> Result<()> {
             Event::DeviceEvent { device_id, event } => {
                 // println!("DeviceEvent: {event:#?}");
             }
+
             Event::WindowEvent {
                 ref event,
                 window_id,
@@ -51,40 +47,9 @@ async fn run() -> Result<()> {
                         {
                             *control_flow = ControlFlow::Exit;
                         }
-                    }
-                }
-
-                /*
-                        if window_id == window.id() => match event {
-                    WindowEvent::AxisMotion {
-                        device_id,
-                        axis,
-                        value,
-                    } => {
-                        // println!("AxisMotion: {device_id:?}\t{axis:?}\t{value:?}");
-                    }
-                    WindowEvent::Touch(touch) => {
-                        // println!("Touch: {touch:?}");
-                    }
-                    WindowEvent::TouchpadPressure {
-                        device_id,
-                        pressure,
-                        stage,
-                    } => {
-                        // println!("TouchPadPressure pressure: {pressure:?}\tstage: {stage:?}");
-                    }
-                    WindowEvent::KeyboardInput { input, .. } => {
-                        use VirtualKeyCode as Key;
-                        if let Some(code) = input.virtual_keycode {
-                            if let Key::Escape = code {
-                                *control_flow = ControlFlow::Exit;
-                            }
-                        }
-                    }
-                    WindowEvent::CloseRequested => {
-                        *control_flow = ControlFlow::Exit
-                    }
-                    WindowEvent::Resized(physical_size) => {
+                    } else if let WindowEvent::CloseRequested = event {
+                        *control_flow = ControlFlow::Exit;
+                    } else if let WindowEvent::Resized(physical_size) = event {
                         // for some reason i get a validation error if i actually attempt
                         // to execute the first resize
                         if first_resize {
@@ -93,12 +58,7 @@ async fn run() -> Result<()> {
                             state.resize(*physical_size);
                         }
                     }
-                    WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
-                        state.resize(**new_inner_size);
-                    }
-                    _ => {}
                 }
-                */
             }
             Event::RedrawRequested(window_id) if window_id == window.id() => {
                 // let w_size = window.inner_size();
@@ -112,21 +72,6 @@ async fn run() -> Result<()> {
                         .texture
                         .create_view(&wgpu::TextureViewDescriptor::default());
 
-                    // let mut transient_res: HashMap<String, InputResource<'_>> =
-                    // HashMap::default();
-
-                    {
-                        // let w_size = window.inner_size();
-                        // let size = [w_size.width, w_size.height];
-                        // let size = window_dims;
-
-                        // let format = state.surface_format;
-                    }
-
-                    // log::warn!("executing graph");
-
-                    // if !clipped_primitives.is_empty() {
-                    // }
                     let mut encoder = state.device.create_command_encoder(
                         &wgpu::CommandEncoderDescriptor {
                             label: Some("egui render"),
@@ -171,7 +116,6 @@ async fn run() -> Result<()> {
                             &clipped_primitives,
                             &screen_descriptor,
                         );
-                        
                     }
 
                     state.queue.submit(Some(encoder.finish()));
@@ -227,7 +171,6 @@ async fn run() -> Result<()> {
                     );
 
                     for (id, image_delta) in &full_output.textures_delta.set {
-                        log::warn!("updating texture {id:?}");
                         renderer.update_texture(
                             &state.device,
                             &state.queue,

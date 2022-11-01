@@ -1,8 +1,5 @@
-use stick::Controller;
 use winit::event::{ElementState, Event, VirtualKeyCode, WindowEvent};
 use winit::event_loop::ControlFlow;
-
-use gilrs::{Button, Event as GEvent, Gilrs};
 
 use raving_wgpu::graph::dfrog::{Graph, InputResource};
 
@@ -99,83 +96,9 @@ async fn run() -> anyhow::Result<()> {
     })
 }
 
-pub fn test_gilrs() -> anyhow::Result<()> {
-    let mut gilrs = Gilrs::new().unwrap();
 
-    for (_id, gamepad) in gilrs.gamepads() {
-        println!("{} is {:?}", gamepad.name(), gamepad.power_info());
-    }
-
-    let mut active_gamepad = None;
-    loop {
-        // Examine new events
-        while let Some(GEvent { id, event, time }) = gilrs.next_event() {
-            println!("{:?} New event from {}: {:?}", time, id, event);
-            active_gamepad = Some(id);
-        }
-
-        // You can also use cached gamepad state
-        if let Some(gamepad) = active_gamepad.map(|id| gilrs.gamepad(id)) {
-            if gamepad.is_pressed(Button::South) {
-                println!("Button South is pressed (XBox - A, PS - X)");
-            }
-        }
-    }
-
-    Ok(())
-}
-
-async fn handle_controller(mut cont: Controller) -> anyhow::Result<()> {
-    println!("controller: {}", cont.name());
-
-    loop {
-        println!("awaiting event");
-        let event = (&mut cont).await;
-        println!("received {event:?}");
-    }
-
-    Ok(())
-}
-
-async fn test_stick() -> anyhow::Result<()> {
-    use stick::*;
-    let mut listener = Listener::default();
-
-    loop {
-        let controller = (&mut listener).await;
-        println!("found controller");
-        handle_controller(controller).await?;
-        dbg!();
-    }
-
-    Ok(())
-}
-
-fn test_fishstick() -> anyhow::Result<()> {
-    use fishsticks::*;
-    let mut ctx = GamepadContext::init().map_err(|s| anyhow::anyhow!(s))?;
-
-    for (id_, gamepad) in ctx.gamepads() {
-        println!(
-            "{id_:?}, analog: {:?}, digital {:?}", 
-            gamepad.analog_inputs,
-            gamepad.digital_inputs,
-        );
-    }
-
-    Ok(())
-}
 
 pub fn main() -> anyhow::Result<()> {
-    use stick::*;
-    let mut listener = Listener::default();
-
-    // let builder = gilrs::GilrsBuilder::default()
-
-    // test_gilrs?;
-    // test_stick()?;
-    test_fishstick()?;
-
     env_logger::builder()
         .filter_level(log::LevelFilter::Warn)
         .init();
