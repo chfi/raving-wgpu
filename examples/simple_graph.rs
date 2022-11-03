@@ -347,8 +347,6 @@ pub async fn run() -> anyhow::Result<()> {
 
     let mut graph = Graph::new();
 
-    graph.add_schemas()?;
-
     let vert_src = include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/shaders/shader.vert.spv"

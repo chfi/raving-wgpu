@@ -93,7 +93,7 @@ impl CubeExample {
         let uniform_data = Self::generate_matrix(4.0 / 3.0);
         let uniform_buf = state.device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor {
-                label: Some("Index Buffer"),
+                label: Some("Uniform Buffer"),
                 contents: bytemuck::cast_slice(&[uniform_data]),
                 usage: wgpu::BufferUsages::UNIFORM
                     | wgpu::BufferUsages::COPY_DST,
@@ -104,7 +104,12 @@ impl CubeExample {
 
         graph.add_link_from_transient("vertices", draw_node, 0);
         graph.add_link_from_transient("indices", draw_node, 1);
-        graph.add_link_from_transient("image", draw_node, 2);
+        graph.add_link_from_transient("swapchain", draw_node, 2);
+
+        // set 0, binding 0, transform matrix
+        graph.add_link_from_transient("transform", draw_node, 3);
+        // set 0, binding 1, r_color
+        // graph.add_link_from_transient("cube_texture", draw_node, 4);
 
         let result = CubeExample {
             graph,
@@ -117,6 +122,91 @@ impl CubeExample {
 
         Ok(result)
     }
+
+    fn render(&mut self, state: &mut State) -> Result<()> {
+        let dims = state.size;
+        let size = [dims.width, dims.height];
+
+        let mut transient_res: HashMap<String, InputResource<'_>> =
+            HashMap::default();
+
+        if let Ok(output) = state.surface.get_current_texture() {
+            let output_view = output
+                .texture
+                .create_view(&wgpu::TextureViewDescriptor::default());
+
+            let format = state.surface_format;
+
+            transient_res.insert(
+                "swapchain".into(),
+                InputResource::Texture {
+                    size,
+                    format,
+                    texture: None,
+                    view: Some(&output_view),
+                    sampler: None,
+                },
+            );
+
+            let stride = 6 * 4;
+            let v_size = 24 * stride;
+
+            transient_res.insert(
+                "vertices".into(),
+                InputResource::Buffer {
+                    size: v_size,
+                    stride: Some(stride),
+                    buffer: &self.vertex_buf,
+                },
+            );
+
+            transient_res.insert(
+                "indices".into(),
+                InputResource::Buffer {
+                    size: 36,
+                    stride: Some(4),
+                    buffer: &self.index_buf,
+                },
+            );
+
+            transient_res.insert(
+                "transform".into(),
+                InputResource::Buffer {
+                    size: 16 * 4,
+                    stride: None,
+                    buffer: &self.uniform_buf,
+                },
+            );
+
+            // add cube texture later
+
+            self.graph.update_transient_cache(&transient_res);
+
+            // log::warn!("validating graph");
+            let valid = self
+                .graph
+                .validate(&transient_res, &self.graph_scalars)
+                .unwrap();
+
+            if !valid {
+                log::error!("graph validation error");
+            }
+
+            let sub_index = self
+                .graph
+                .execute(&state, &transient_res, &self.graph_scalars)
+                .unwrap();
+            state
+                .device
+                .poll(wgpu::MaintainBase::WaitForSubmissionIndex(sub_index));
+
+            output.present();
+        } else {
+            state.resize(state.size);
+        }
+
+        Ok(())
+    }
 }
 
 async fn run() -> anyhow::Result<()> {
@@ -125,6 +215,8 @@ async fn run() -> anyhow::Result<()> {
     let size = window.inner_size();
 
     let dims = [size.width, size.height];
+
+    let mut cube = CubeExample::init(&state)?;
 
     let mut first_resize = true;
 
@@ -173,6 +265,9 @@ async fn run() -> anyhow::Result<()> {
             Event::RedrawRequested(window_id) if window_id == window.id() => {
                 let w_size = window.inner_size();
                 let size = [w_size.width, w_size.height];
+
+                cube.render(&mut state).unwrap();
+
                 // polyline.render(&mut state, size).unwrap();
                 // gol.render(&mut state, size).unwrap();
             }
