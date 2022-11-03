@@ -75,3 +75,7 @@ path = "examples/input.rs"
 [[example]]
 name = "egui"
 path = "examples/egui.rs"
+
+[[example]]
+name = "cube"
+path = "examples/cube.rs"
