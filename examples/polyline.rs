@@ -116,6 +116,7 @@ impl Polyline {
                 vert_src,
                 frag_src,
                 ["vertex_in"],
+                None,
                 &[state.surface_format],
             )?
         };

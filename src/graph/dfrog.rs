@@ -35,6 +35,7 @@ pub enum SocketBinding {
     VertexBuffer {
         slot: u32,
     },
+    IndexBuffer,
     FragmentAttachment {
         location: u32,
     },
@@ -637,6 +638,7 @@ impl Graph {
         vert_src: &[u8],
         frag_src: &[u8],
         vertex_slots: impl IntoIterator<Item = &'a str>,
+        index_slot: Option<&str>,
         frag_out_formats: &[wgpu::TextureFormat],
     ) -> Result<NodeSchemaId> {
         let schema_id = NodeSchemaId(self.schemas.len());
@@ -645,6 +647,7 @@ impl Graph {
             vert_src,
             frag_src,
             vertex_slots,
+            index_slot,
             frag_out_formats,
             schema_id,
         )?;
@@ -671,8 +674,8 @@ impl Graph {
         state: &State,
         comp_path: &str,
     ) -> Result<NodeSchemaId> {
-        use std::io::prelude::*;
         use std::fs::File;
+        use std::io::prelude::*;
 
         let mut shader_file = File::open(comp_path)?;
         let mut shader_src = String::new();
@@ -680,18 +683,18 @@ impl Graph {
 
         let schema_id = NodeSchemaId(self.schemas.len());
         let result =
-            self.ops.create_compute_schema_wgsl(state, &shader_src, schema_id);
+            self.ops
+                .create_compute_schema_wgsl(state, &shader_src, schema_id);
 
         let schema = match result {
             Ok(schema) => schema,
             Err(err) => {
                 log::error!("Error in compute module for `{comp_path}`");
-                
+
                 log::error!("error!! {err:#?}");
 
                 let root = err.root_cause();
                 log::error!("root cause!! {root:#?}");
-
 
                 anyhow::bail!(err);
             }
@@ -1359,7 +1362,12 @@ impl<'a> NodeCtx<'a> {
 }
 
 impl<'a> ResourceCtx<'a> {
-    pub fn node_ctx(&'a self, ops: &GraphOps, schema: &NodeSchema, node_id: NodeId) -> NodeCtx<'a> {
+    pub fn node_ctx(
+        &'a self,
+        ops: &GraphOps,
+        schema: &NodeSchema,
+        node_id: NodeId,
+    ) -> NodeCtx<'a> {
         // let node = &graph.nodes[node_id.0];
         let op_id = ops.schema_ops.get(&schema.schema_id).unwrap();
 
@@ -1511,6 +1519,11 @@ impl GraphOps {
                         self.node_op_state.entry(node_id).or_default();
                     op_state.vertex_buffers.insert(*slot, *socket);
                 }
+                SocketBinding::IndexBuffer => {
+                    let op_state =
+                        self.node_op_state.entry(node_id).or_default();
+                    op_state.index_buffer = Some(*socket);
+                }
                 SocketBinding::FragmentAttachment { location } => {
                     let op_state =
                         self.node_op_state.entry(node_id).or_default();
@@ -1630,6 +1643,24 @@ impl GraphOps {
                 // log::warn!("executing graphics node");
                 let graphics = &self.graphics[*i];
 
+                let indices = op_state.index_buffer.map(|socket| {
+                    let res = resource_ctx
+                        .get_resource_at_socket(node_id, socket)
+                        .unwrap();
+
+                    if let InputResource::Buffer {
+                        size,
+                        stride,
+                        buffer,
+                    } = res
+                    {
+                        let indices = 0u32..size as u32;
+                        (buffer, indices)
+                    } else {
+                        panic!("texture was used as index buffer!");
+                    }
+                });
+
                 let mut vertex_buffers = op_state
                     .vertex_buffers
                     .iter()
@@ -1718,23 +1749,31 @@ impl GraphOps {
                         }
                     }
 
-                    let (vertices, instances) = {
-                        let (_, size, stride) = vertex_buffers[0].1;
-
-                        // TODO: optionally set vertices/instances via NodeOpState
-                        let stride =
-                            stride.expect("vertex buffer needs stride to draw");
-
-                        let count = (size / stride) as u32;
-                        // ((0..6), (0..count))
-                        ((0..count), (0..1))
-                    };
-                    dbg!((&vertices, &instances));
-
                     op_state.set_render_push_constants(&mut pass);
 
+                    let instances = op_state.instances.clone().unwrap_or(0..1);
 
-                    pass.draw(vertices, instances);
+                    if let Some((index_buffer, indices)) = indices {
+                        pass.set_index_buffer(
+                            index_buffer.slice(..),
+                            wgpu::IndexFormat::Uint32,
+                        );
+                        pass.draw_indexed(indices, 0, instances);
+                    } else {
+                        let vertices = {
+                            let (_, size, stride) = vertex_buffers[0].1;
+
+                            // TODO: optionally set vertices/instances via NodeOpState
+                            let stride = stride
+                                .expect("vertex buffer needs stride to draw");
+
+                            let count = (size / stride) as u32;
+                            0..count
+                        };
+                        dbg!((&vertices, &instances));
+
+                        pass.draw(vertices, instances);
+                    }
                 }
             }
             NodeOpId::Compute(i) => {
@@ -1817,7 +1856,7 @@ impl GraphOps {
 
         Ok(schema)
     }
-    
+
     pub fn create_compute_schema_wgsl(
         &mut self,
         state: &State,
@@ -1844,6 +1883,7 @@ impl GraphOps {
         vert_src: &[u8],
         frag_src: &[u8],
         vertex_slots: impl IntoIterator<Item = &'a str>,
+        index_slot: Option<&str>,
         frag_out_formats: &[wgpu::TextureFormat],
         schema_id: NodeSchemaId,
     ) -> Result<NodeSchema> {
@@ -1899,9 +1939,16 @@ impl GraphOps {
         for (ix, socket_name) in vertex_slots.into_iter().enumerate() {
             socket_bindings.push((
                 socket_names.len(),
-                SocketBinding::VertexBuffer { slot: 0 },
+                SocketBinding::VertexBuffer { slot: ix as u32 },
             ));
             socket_names.push(socket_name.into());
+        }
+
+        // index buffer if applicable
+        if let Some(index_socket) = index_slot {
+            socket_bindings
+                .push((socket_names.len(), SocketBinding::IndexBuffer));
+            socket_names.push(index_socket.into());
         }
 
         //   render attachments
@@ -1981,6 +2028,10 @@ pub struct NodeOpState {
     node_parameters: rhai::Map,
 
     vertex_buffers: BTreeMap<u32, LocalSocketIx>,
+    index_buffer: Option<LocalSocketIx>,
+
+    pub instances: Option<std::ops::Range<u32>>,
+
     attachments: BTreeMap<u32, LocalSocketIx>,
 
     pub push_constants: FxHashMap<naga::ShaderStage, PushConstants>,
