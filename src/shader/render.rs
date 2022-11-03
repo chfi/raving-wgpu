@@ -43,10 +43,12 @@ impl GraphicsPipeline {
         todo!();
     }
 
-    pub fn new(
+    pub fn new_custom(
         state: &crate::State,
         vertex: VertexShaderInstance,
         fragment: FragmentShaderInstance,
+
+        primitive: wgpu::PrimitiveState,
     ) -> Result<Self> {
         let vertex_buffers = vertex.create_buffer_layouts();
         let vertex_state = vertex.create_vertex_state(&vertex_buffers);
@@ -114,17 +116,8 @@ impl GraphicsPipeline {
             state.device.create_pipeline_layout(&desc)
         };
 
-        let primitive = wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
-            // topology: wgpu::PrimitiveTopology::LineList,
-            front_face: wgpu::FrontFace::Ccw,
-            cull_mode: None,
-            polygon_mode: wgpu::PolygonMode::Fill,
-
-            strip_index_format: None,
-            unclipped_depth: false,
-            conservative: false,
-        };
+        /*
+         */
 
         let multisample = wgpu::MultisampleState {
             count: 1,
@@ -157,6 +150,25 @@ impl GraphicsPipeline {
         };
 
         Ok(result)
+    }
+
+    pub fn new(
+        state: &crate::State,
+        vertex: VertexShaderInstance,
+        fragment: FragmentShaderInstance,
+    ) -> Result<Self> {
+        let primitive = wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: Some(wgpu::Face::Back),
+            polygon_mode: wgpu::PolygonMode::Fill,
+
+            strip_index_format: None,
+            unclipped_depth: false,
+            conservative: false,
+        };
+
+        Self::new_custom(state, vertex, fragment, primitive)
     }
 }
 

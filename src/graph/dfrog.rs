@@ -646,6 +646,33 @@ impl Graph {
             state,
             vert_src,
             frag_src,
+            None,
+            vertex_slots,
+            index_slot,
+            frag_out_formats,
+            schema_id,
+        )?;
+        self.schemas.push(schema);
+
+        Ok(schema_id)
+    }
+
+    pub fn add_graphics_schema_custom<'a>(
+        &mut self,
+        state: &State,
+        vert_src: &[u8],
+        frag_src: &[u8],
+        primitive: wgpu::PrimitiveState,
+        vertex_slots: impl IntoIterator<Item = &'a str>,
+        index_slot: Option<&str>,
+        frag_out_formats: &[wgpu::TextureFormat],
+    ) -> Result<NodeSchemaId> {
+        let schema_id = NodeSchemaId(self.schemas.len());
+        let schema = self.ops.create_graphics_schema(
+            state,
+            vert_src,
+            frag_src,
+            Some(primitive),
             vertex_slots,
             index_slot,
             frag_out_formats,
@@ -1177,7 +1204,6 @@ impl Graph {
 
         Ok(())
     }
-
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -1502,8 +1528,6 @@ impl GraphOps {
             return Ok(false);
         };
 
-        // println!("op_state: {:#?}", op_state);
-
         match op_id {
             NodeOpId::Graphics(i) => {
                 // log::warn!("executing graphics node");
@@ -1748,6 +1772,7 @@ impl GraphOps {
         state: &State,
         vert_src: &[u8],
         frag_src: &[u8],
+        primitive: Option<wgpu::PrimitiveState>,
         vertex_slots: impl IntoIterator<Item = &'a str>,
         index_slot: Option<&str>,
         frag_out_formats: &[wgpu::TextureFormat],
@@ -1768,7 +1793,13 @@ impl GraphOps {
         let frag_inst =
             FragmentShaderInstance::from_shader(&frag, frag_out_formats)?;
 
-        let graphics = GraphicsPipeline::new(&state, vert_inst, frag_inst)?;
+        let graphics = if let Some(primitive) = primitive {
+            GraphicsPipeline::new_custom(
+                &state, vert_inst, frag_inst, primitive,
+            )
+        } else {
+            GraphicsPipeline::new(&state, vert_inst, frag_inst)
+        }?;
 
         let op_id = NodeOpId::Graphics(self.graphics.len());
 

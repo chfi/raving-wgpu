@@ -62,10 +62,22 @@ impl CubeExample {
                 "/shaders/examples/cube.frag.spv"
             ));
 
-            graph.add_graphics_schema(
+            let primitive = wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: Some(wgpu::Face::Back),
+                polygon_mode: wgpu::PolygonMode::Fill,
+
+                strip_index_format: None,
+                unclipped_depth: false,
+                conservative: false,
+            };
+
+            graph.add_graphics_schema_custom(
                 state,
                 vert_src,
                 frag_src,
+                primitive,
                 ["vertex_in"],
                 Some("indices"),
                 &[state.surface_format],
@@ -278,22 +290,6 @@ async fn run() -> anyhow::Result<()> {
                 let dt = prev_frame_t.elapsed().as_secs_f32();
                 prev_frame_t = std::time::Instant::now();
 
-                // polyline.update(dt);
-
-                // gol.update(dt);
-
-                // {
-                //     let w_size = window.inner_size();
-                //     let size = [w_size.width, w_size.height];
-
-                //     gol.cfg.viewport_size = size;
-
-                //     state.queue.write_buffer(
-                //         &gol.cfg_buffer,
-                //         0,
-                //         bytemuck::cast_slice(&[gol.cfg]),
-                //     );
-                // }
 
                 window.request_redraw();
             }
