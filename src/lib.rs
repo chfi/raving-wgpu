@@ -15,6 +15,7 @@ pub mod texture;
 
 pub mod camera;
 pub mod input;
+pub mod gui;
 
 pub mod util;
 
