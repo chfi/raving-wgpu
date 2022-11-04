@@ -1,3 +1,4 @@
+use raving_wgpu::gui::EguiCtx;
 use wgpu::Maintain;
 use winit::event::{ElementState, Event, VirtualKeyCode, WindowEvent};
 use winit::event_loop::ControlFlow;
@@ -7,21 +8,8 @@ use anyhow::Result;
 async fn run() -> Result<()> {
     let (event_loop, window, mut state) = raving_wgpu::initialize().await?;
 
-    let mut egui_ctx = egui::Context::default();
-
-    let mut egui_state = egui_winit::State::new(&event_loop);
-
-    let output_color_format = state.surface_format;
-    let msaa_samples = 1;
-
-    let mut renderer = egui_wgpu::Renderer::new(
-        &state.device,
-        output_color_format,
-        None,
-        msaa_samples,
-    );
-
-    let mut clipped_primitives = Vec::new();
+    let mut egui_ctx =
+        EguiCtx::init(&event_loop, &state, Some(wgpu::Color::BLACK));
 
     let mut first_resize = true;
 
@@ -37,7 +25,7 @@ async fn run() -> Result<()> {
                 ref event,
                 window_id,
             } => {
-                let resp = egui_state.on_event(&egui_ctx, event);
+                let resp = egui_ctx.on_event(event);
 
                 if !resp.consumed {
                     if let WindowEvent::KeyboardInput { input, .. } = event {
@@ -77,46 +65,8 @@ async fn run() -> Result<()> {
                             label: Some("egui render"),
                         },
                     );
-                    {
-                        let mut render_pass = encoder.begin_render_pass(
-                            &wgpu::RenderPassDescriptor {
-                                color_attachments: &[Some(
-                                    wgpu::RenderPassColorAttachment {
-                                        view: &output_view,
-                                        resolve_target: None,
-                                        ops: wgpu::Operations {
-                                            load: wgpu::LoadOp::Clear(
-                                                wgpu::Color {
-                                                    r: 0.0,
-                                                    g: 0.0,
-                                                    b: 0.0,
-                                                    a: 1.0,
-                                                },
-                                            ),
-                                            store: true,
-                                        },
-                                    },
-                                )],
-                                depth_stencil_attachment: None,
-                                label: Some("egui_render"),
-                            },
-                        );
 
-                        let size = window.inner_size();
-                        let pixels_per_point = egui_state.pixels_per_point();
-
-                        let screen_descriptor =
-                            egui_wgpu::renderer::ScreenDescriptor {
-                                size_in_pixels: [size.width, size.height],
-                                pixels_per_point,
-                            };
-
-                        renderer.render(
-                            &mut render_pass,
-                            &clipped_primitives,
-                            &screen_descriptor,
-                        );
-                    }
+                    egui_ctx.render(&state, &output_view, &mut encoder);
 
                     state.queue.submit(Some(encoder.finish()));
                     output.present();
@@ -130,61 +80,11 @@ async fn run() -> Result<()> {
                 let dt = prev_frame_t.elapsed().as_secs_f32();
                 prev_frame_t = std::time::Instant::now();
 
-                let raw_input = egui_state.take_egui_input(&window);
-                let full_output = egui_ctx.run(raw_input, |ctx| {
+                egui_ctx.run(&window, |ctx| {
                     egui::CentralPanel::default().show(&ctx, |ui| {
                         ui.label("hello world");
                     });
                 });
-
-                egui_state.handle_platform_output(
-                    &window,
-                    &egui_ctx,
-                    full_output.platform_output,
-                );
-
-                let clipped = egui_ctx.tessellate(full_output.shapes);
-                clipped_primitives = clipped;
-
-                {
-                    let mut encoder = state.device.create_command_encoder(
-                        &wgpu::CommandEncoderDescriptor {
-                            label: Some("egui updates"),
-                        },
-                    );
-
-                    let size = window.inner_size();
-                    let pixels_per_point = egui_state.pixels_per_point();
-
-                    let screen_descriptor =
-                        egui_wgpu::renderer::ScreenDescriptor {
-                            size_in_pixels: [size.width, size.height],
-                            pixels_per_point,
-                        };
-
-                    renderer.update_buffers(
-                        &state.device,
-                        &state.queue,
-                        &mut encoder,
-                        &clipped_primitives,
-                        &screen_descriptor,
-                    );
-
-                    for (id, image_delta) in &full_output.textures_delta.set {
-                        renderer.update_texture(
-                            &state.device,
-                            &state.queue,
-                            *id,
-                            image_delta,
-                        );
-                    }
-
-                    for id in &full_output.textures_delta.free {
-                        renderer.free_texture(id);
-                    }
-
-                    state.queue.submit(Some(encoder.finish()));
-                }
 
                 window.request_redraw();
             }

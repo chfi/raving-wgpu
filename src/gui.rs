@@ -1,6 +1,5 @@
 use egui::{ClippedPrimitive, TexturesDelta};
 
-use anyhow::Result;
 use egui_wgpu::renderer::ScreenDescriptor;
 use wgpu::CommandEncoder;
 use winit::{event_loop::EventLoopWindowTarget, window::Window};
@@ -15,16 +14,26 @@ pub struct EguiCtx {
 
     clipped_primitives: Vec<ClippedPrimitive>,
     textures_delta: TexturesDelta,
+
+    load_op: wgpu::LoadOp<wgpu::Color>,
 }
 
 impl EguiCtx {
-    pub fn init(event_loop: &EventLoopWindowTarget<()>, state: &State) -> Self {
+    pub fn init(
+        event_loop: &EventLoopWindowTarget<()>,
+        state: &State,
+        clear_color: Option<wgpu::Color>,
+    ) -> Self {
         let egui_ctx = egui::Context::default();
 
         let egui_state = egui_winit::State::new(event_loop);
 
         let output_color_format = state.surface_format;
         let msaa_samples = 1;
+
+        let load_op = clear_color
+            .map(wgpu::LoadOp::Clear)
+            .unwrap_or(wgpu::LoadOp::Load);
 
         let renderer = egui_wgpu::Renderer::new(
             &state.device,
@@ -41,6 +50,7 @@ impl EguiCtx {
             renderer,
             clipped_primitives,
             textures_delta: TexturesDelta::default(),
+            load_op,
         }
     }
 
@@ -75,7 +85,7 @@ impl EguiCtx {
         state: &State,
         render_target: &wgpu::TextureView,
         encoder: &mut CommandEncoder,
-    ) -> Result<()> {
+    ) {
         let screen_desc = ScreenDescriptor {
             size_in_pixels: [state.size.width, state.size.height],
             pixels_per_point: self.winit_state.pixels_per_point(),
@@ -110,12 +120,7 @@ impl EguiCtx {
                             view: render_target,
                             resolve_target: None,
                             ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(wgpu::Color {
-                                    r: 0.0,
-                                    g: 0.0,
-                                    b: 0.0,
-                                    a: 1.0,
-                                }),
+                                load: self.load_op,
                                 store: true,
                             },
                         },
@@ -130,7 +135,5 @@ impl EguiCtx {
                 &screen_desc,
             );
         }
-
-        Ok(())
     }
 }
