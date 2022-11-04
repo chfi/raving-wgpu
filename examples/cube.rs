@@ -1,9 +1,8 @@
 use egui_winit::EventResponse;
-use std::collections::HashMap;
 use raving_wgpu::camera::DynamicCamera2d;
 use raving_wgpu::gui::EguiCtx;
-use wgpu::util::{BufferInitDescriptor, DeviceExt};
-use wgpu::BufferUsages;
+use std::collections::HashMap;
+use wgpu::util::{DeviceExt};
 use winit::event::{ElementState, Event, VirtualKeyCode, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoopWindowTarget};
 
@@ -72,25 +71,28 @@ impl CubeExample {
             if let WindowEvent::KeyboardInput { input, .. } = event {
                 if let Some(key) = input.virtual_keycode {
                     use winit::event::VirtualKeyCode as Key;
+                    consume = true;
 
                     match key {
                         Key::Up => {
-                            consume = true;
                             self.camera.nudge(Vec2::unit_y());
                         }
                         Key::Down => {
-                            consume = true;
                             self.camera.nudge(-Vec2::unit_y());
                         }
                         Key::Left => {
-                            consume = true;
                             self.camera.nudge(Vec2::unit_x());
                         }
                         Key::Right => {
-                            consume = true;
                             self.camera.nudge(-Vec2::unit_x());
                         }
-                        _ => (),
+                        Key::Space => {
+                            self.camera.stop();
+                        }
+                        Key::Escape => {
+                            self.camera.set_position(Vec2::zero());
+                        }
+                        _ => consume = false,
                     }
                 }
             }
@@ -122,11 +124,12 @@ impl CubeExample {
     }
 
     fn update(&mut self, window: &winit::window::Window, dt: f32) {
-        self.camera.update(dt);
-
         self.egui.run(window, |ctx| {
             Self::camera_window(ctx, &self.camera);
-        })
+        });
+
+        self.camera.update(dt);
+
     }
 
     fn init(
@@ -370,13 +373,23 @@ async fn run() -> anyhow::Result<()> {
                         WindowEvent::CloseRequested => {
                             *control_flow = ControlFlow::Exit
                         }
-                        WindowEvent::Resized(physical_size) => {
+                        WindowEvent::Resized(phys_size) => {
                             // for some reason i get a validation error if i actually attempt
                             // to execute the first resize
                             if first_resize {
                                 first_resize = false;
                             } else {
-                                state.resize(*physical_size);
+                                let old = state.size;
+                                let new = *phys_size;
+
+                                state.resize(*phys_size);
+
+                                let old = Vec2::new(old.width as f32, old.height as f32);
+                                let new = Vec2::new(new.width as f32, new.height as f32);
+
+                                let div = new / old;
+
+                                cube.camera.resize_relative(div);
                             }
                         }
                         WindowEvent::ScaleFactorChanged {

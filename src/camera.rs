@@ -1,5 +1,4 @@
-use crossbeam::atomic::AtomicCell;
-use ultraviolet::{Isometry3, Mat4, Rotor2, Rotor3, Vec2, Vec3};
+use ultraviolet::{Isometry3, Mat4, Rotor3, Vec2, Vec3};
 
 pub struct DynamicCamera2d {
     pub size: Vec2,
@@ -19,23 +18,26 @@ impl DynamicCamera2d {
         }
     }
 
+
+    pub fn resize_relative(&mut self, scale: Vec2) {
+        println!("resizing with {scale:?}");
+        self.size *= scale;
+    }
+
     pub fn nudge(&mut self, n: Vec2) {
-        self.accel += n * self.size;
-        println!("self.accel = {:?}", self.accel);
+        self.accel += n * self.size * self.size;
     }
 
     pub fn update(&mut self, dt: f32) {
         let v = self.center - self.prev_center;
-        println!(
-            "updating with {:?} * {} * {} = {:?}",
-            self.accel,
-            dt,
-            dt,
-            self.accel * dt,
-        );
         self.prev_center = self.center;
         self.center += v + self.accel * dt * dt;
         self.accel = Vec2::zero();
+    }
+    
+    pub fn set_position(&mut self, center: Vec2) {
+        self.center = center;
+        self.prev_center = center;
     }
 
     pub fn stop(&mut self) {
