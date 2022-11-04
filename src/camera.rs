@@ -1,11 +1,12 @@
-use ultraviolet::{Mat4, Vec2};
+use crossbeam::atomic::AtomicCell;
+use ultraviolet::{Isometry3, Mat4, Rotor2, Rotor3, Vec2, Vec3};
 
 pub struct DynamicCamera2d {
-    size: Vec2,
-    center: Vec2,
-    prev_center: Vec2,
+    pub size: Vec2,
+    pub center: Vec2,
+    pub prev_center: Vec2,
 
-    accel: Vec2,
+    pub accel: Vec2,
 }
 
 impl DynamicCamera2d {
@@ -18,10 +19,22 @@ impl DynamicCamera2d {
         }
     }
 
+    pub fn nudge(&mut self, n: Vec2) {
+        self.accel += n * self.size;
+        println!("self.accel = {:?}", self.accel);
+    }
+
     pub fn update(&mut self, dt: f32) {
         let v = self.center - self.prev_center;
+        println!(
+            "updating with {:?} * {} * {} = {:?}",
+            self.accel,
+            dt,
+            dt,
+            self.accel * dt,
+        );
         self.prev_center = self.center;
-        self.center += v * self.accel * dt * dt;
+        self.center += v + self.accel * dt * dt;
         self.accel = Vec2::zero();
     }
 
@@ -31,25 +44,23 @@ impl DynamicCamera2d {
     }
 
     pub fn to_matrix(&self) -> Mat4 {
-        let p = self.center;
-        let size = self.size;
+        let right = self.size.x;
+        let left = -right;
+        let top = self.size.y;
+        let bottom = -top;
 
-        let min = p - size * 0.5;
-        let max = p + size * 0.5;
+        let near = 1.0;
+        let far = 10.0;
 
-        dbg!(min);
-        dbg!(max);
-
-        let left = min.x;
-        let right = max.x;
-        let bottom = min.y;
-        let top = max.y;
-
-        let near = 1000.0;
-        let far = 1.0;
-
-        ultraviolet::projection::rh_yup::orthographic_wgpu_dx(
+        let proj = ultraviolet::projection::rh_yup::orthographic_wgpu_dx(
             left, right, bottom, top, near, far,
-        )
+        );
+
+        let p = self.center;
+        let p_ = Vec3::new(p.x, p.y, 5.0);
+
+        let view = Isometry3::new(p_, Rotor3::identity());
+
+        proj * view.into_homogeneous_matrix().inversed()
     }
 }

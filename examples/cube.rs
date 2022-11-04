@@ -1,10 +1,11 @@
+use egui_winit::EventResponse;
 use std::collections::HashMap;
-//
 use raving_wgpu::camera::DynamicCamera2d;
+use raving_wgpu::gui::EguiCtx;
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 use wgpu::BufferUsages;
 use winit::event::{ElementState, Event, VirtualKeyCode, WindowEvent};
-use winit::event_loop::ControlFlow;
+use winit::event_loop::{ControlFlow, EventLoopWindowTarget};
 
 use raving_wgpu::graph::dfrog::{Graph, InputResource};
 use raving_wgpu::{NodeId, State};
@@ -22,6 +23,9 @@ struct Vertex {
 
 struct CubeExample {
     graph: Graph,
+    egui: EguiCtx,
+
+    camera: DynamicCamera2d,
 
     graph_scalars: rhai::Map,
 
@@ -41,15 +45,94 @@ impl CubeExample {
             1.0,
             10.0,
         );
+        dbg!(&projection);
         let view = Mat4::look_at(
             Vec3::new(1.5, -5.0, 3.0),
             Vec3::zero(),
             Vec3::unit_z(),
         );
-        projection * view
+        dbg!(&view);
+
+        let ortho = ultraviolet::projection::orthographic_wgpu_dx(
+            // left, right, bottom, top, near, far,
+            -8.0, 8.0, -6.0, 6.0, 1.0, 10.0,
+        );
+        dbg!(&ortho);
+        ortho * view
+        // projection * view
     }
 
-    fn init(state: &State) -> Result<Self> {
+    fn on_event(&mut self, event: &WindowEvent) -> EventResponse {
+        let mut resp = self.egui.on_event(event);
+
+        let mut consume = false;
+
+        if !resp.consumed {
+            println!("egui did not consume");
+            if let WindowEvent::KeyboardInput { input, .. } = event {
+                if let Some(key) = input.virtual_keycode {
+                    use winit::event::VirtualKeyCode as Key;
+
+                    match key {
+                        Key::Up => {
+                            consume = true;
+                            self.camera.nudge(Vec2::unit_y());
+                        }
+                        Key::Down => {
+                            consume = true;
+                            self.camera.nudge(-Vec2::unit_y());
+                        }
+                        Key::Left => {
+                            consume = true;
+                            self.camera.nudge(Vec2::unit_x());
+                        }
+                        Key::Right => {
+                            consume = true;
+                            self.camera.nudge(-Vec2::unit_x());
+                        }
+                        _ => (),
+                    }
+                }
+            }
+        }
+
+        if consume {
+            resp.consumed = true;
+        }
+
+        resp
+    }
+
+    fn camera_window(ctx: &egui::Context, camera: &DynamicCamera2d) {
+        egui::Window::new("Camera").show(ctx, |ui| {
+            let p1 = camera.center;
+            let p0 = camera.prev_center;
+
+            let v = p1 - p0;
+            let a = camera.accel;
+
+            for (u, label) in [(p1, "pos"), (v, "vel"), (a, "accel")] {
+                ui.label(&format!("{}: ({}, {})", label, u.x, u.y));
+            }
+
+            let width = camera.size.x;
+            let height = camera.size.y;
+            ui.label(&format!("size: ({width}, {height})"));
+        });
+    }
+
+    fn update(&mut self, window: &winit::window::Window, dt: f32) {
+        self.camera.update(dt);
+
+        self.egui.run(window, |ctx| {
+            Self::camera_window(ctx, &self.camera);
+        })
+    }
+
+    fn init(
+        event_loop: &EventLoopWindowTarget<()>,
+        state: &State,
+    ) -> Result<Self> {
         let mut graph = Graph::new();
 
         let draw_schema = {
@@ -102,6 +185,11 @@ impl CubeExample {
             },
         );
 
+        let camera =
+            DynamicCamera2d::new(Vec2::new(0.0, 0.0), Vec2::new(4.0, 3.0));
+
+        let uniform_data = camera.to_matrix();
+
         let uniform_data = Self::generate_matrix(4.0 / 3.0);
         let uniform_buf = state.device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor {
@@ -123,6 +211,8 @@ impl CubeExample {
         // set 0, binding 1, r_color
         // graph.add_link_from_transient("cube_texture", draw_node, 4);
 
+        let egui = EguiCtx::init(event_loop, state, None);
+
         let result = CubeExample {
             graph,
             graph_scalars: rhai::Map::default(),
@@ -130,6 +220,10 @@ impl CubeExample {
             vertex_buf,
             index_buf,
             draw_node,
+
+            camera,
+
+            egui,
         };
 
         Ok(result)
@@ -143,6 +237,15 @@ impl CubeExample {
             HashMap::default();
 
         if let Ok(output) = state.surface.get_current_texture() {
+            {
+                let uniform_data = self.camera.to_matrix();
+                state.queue.write_buffer(
+                    &self.uniform_buf,
+                    0,
+                    bytemuck::cast_slice(&[uniform_data]),
+                );
+            }
+
             let output_view = output
                 .texture
                 .create_view(&wgpu::TextureViewDescriptor::default());
@@ -204,13 +307,25 @@ impl CubeExample {
                 log::error!("graph validation error");
             }
 
-            let sub_index = self
+            let _sub_index = self
                 .graph
                 .execute(&state, &transient_res, &self.graph_scalars)
                 .unwrap();
-            state
-                .device
-                .poll(wgpu::MaintainBase::WaitForSubmissionIndex(sub_index));
+
+            let mut encoder = state.device.create_command_encoder(
+                &wgpu::CommandEncoderDescriptor {
+                    label: Some("egui render"),
+                },
+            );
+
+            self.egui.render(state, &output_view, &mut encoder);
+
+            state.queue.submit(Some(encoder.finish()));
+
+            // probably shouldn't be polling here, but the render graph
+            // should probably not be submitting by itself, either:
+            //  better to return the encoders that will be submitted
+            state.device.poll(wgpu::MaintainBase::Wait);
 
             output.present();
         } else {
@@ -228,7 +343,7 @@ async fn run() -> anyhow::Result<()> {
 
     let dims = [size.width, size.height];
 
-    let mut cube = CubeExample::init(&state)?;
+    let mut cube = CubeExample::init(&event_loop, &state)?;
 
     let mut first_resize = true;
 
@@ -239,41 +354,42 @@ async fn run() -> anyhow::Result<()> {
             Event::WindowEvent {
                 ref event,
                 window_id,
-            } if window_id == window.id() => match event {
-                WindowEvent::Touch(touch) => {
-                    // if !matches!(touch.phase, TouchPhase::Moved) {
-                        // println!("{touch:#?}");
-                    // }
-                }
-                WindowEvent::TouchpadPressure { device_id, pressure, stage } => {
-                    //
-                    println!("TouchPadPressure pressure: {pressure:?}\tstage: {stage:?}");
-                }
-                WindowEvent::KeyboardInput { input, .. } => {
-                    use VirtualKeyCode as Key;
-                    if let Some(code) = input.virtual_keycode {
-                        if let Key::Escape = code {
-                            *control_flow = ControlFlow::Exit;
+            } => {
+                let egui_resp = cube.on_event(event);
+
+                if !egui_resp.consumed {
+                    match event {
+                        WindowEvent::KeyboardInput { input, .. } => {
+                            use VirtualKeyCode as Key;
+                            if let Some(code) = input.virtual_keycode {
+                                if let Key::Escape = code {
+                                    *control_flow = ControlFlow::Exit;
+                                }
+                            }
                         }
+                        WindowEvent::CloseRequested => {
+                            *control_flow = ControlFlow::Exit
+                        }
+                        WindowEvent::Resized(physical_size) => {
+                            // for some reason i get a validation error if i actually attempt
+                            // to execute the first resize
+                            if first_resize {
+                                first_resize = false;
+                            } else {
+                                state.resize(*physical_size);
+                            }
+                        }
+                        WindowEvent::ScaleFactorChanged {
+                            new_inner_size,
+                            ..
+                        } => {
+                            state.resize(**new_inner_size);
+                        }
+                        _ => {}
                     }
                 }
-                WindowEvent::CloseRequested => {
-                    *control_flow = ControlFlow::Exit
-                }
-                WindowEvent::Resized(physical_size) => {
-                    // for some reason i get a validation error if i actually attempt
-                    // to execute the first resize
-                    if first_resize {
-                        first_resize = false;
-                    } else {
-                        state.resize(*physical_size);
-                    }
-                }
-                WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
-                    state.resize(**new_inner_size);
-                }
-                _ => {}
-            },
+            }
+
             Event::RedrawRequested(window_id) if window_id == window.id() => {
                 let w_size = window.inner_size();
                 let size = [w_size.width, w_size.height];
@@ -290,6 +406,7 @@ async fn run() -> anyhow::Result<()> {
                 let dt = prev_frame_t.elapsed().as_secs_f32();
                 prev_frame_t = std::time::Instant::now();
 
+                cube.update(&window, dt);
 
                 window.request_redraw();
             }

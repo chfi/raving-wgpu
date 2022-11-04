@@ -1,17 +1,12 @@
 use naga::{Expression, Handle, ScalarKind, VectorSize};
-use rustc_hash::{FxHashMap, FxHashSet};
 use wgpu::*;
 
-use anyhow::{anyhow, bail, Result};
-use std::{
-    collections::{BTreeMap, HashMap, VecDeque},
-    iter,
-    sync::Arc,
-};
+use anyhow::{Result};
+use std::sync::Arc;
 
-use crate::{shader::interface::GroupBindings, ResourceId};
+use crate::shader::interface::GroupBindings;
 
-use super::{interface::PushConstants, *};
+use super::*;
 
 #[derive(Debug)]
 pub struct GraphicsPipeline {
