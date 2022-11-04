@@ -18,6 +18,22 @@ impl DynamicCamera2d {
         }
     }
 
+    /// `fix` should be relative to center, in normalized screen coordinates
+    pub fn scale_uniformly_around(&mut self, fix: Vec2, scale: f32) {
+        let n = fix.normalized();
+
+        // the current world distance
+        let dist = (fix * self.size).mag();
+        // the new world distance
+        let n_dist = dist * scale;
+
+        let diff = n_dist / dist;
+        let sign = (scale - 1.0).signum();
+
+        self.center -= (n * diff) * sign;
+        self.prev_center = self.center;
+        self.size = self.size * scale;
+    }
 
     pub fn resize_relative(&mut self, scale: Vec2) {
         println!("resizing with {scale:?}");

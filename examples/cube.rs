@@ -36,38 +36,12 @@ struct CubeExample {
 }
 
 impl CubeExample {
-    fn generate_matrix(aspect_ratio: f32) -> Mat4 {
-        let vertical_fov = std::f32::consts::PI / 4.0;
-        let projection = ultraviolet::projection::perspective_wgpu_dx(
-            vertical_fov,
-            aspect_ratio,
-            1.0,
-            10.0,
-        );
-        dbg!(&projection);
-        let view = Mat4::look_at(
-            Vec3::new(1.5, -5.0, 3.0),
-            Vec3::zero(),
-            Vec3::unit_z(),
-        );
-        dbg!(&view);
-
-        let ortho = ultraviolet::projection::orthographic_wgpu_dx(
-            // left, right, bottom, top, near, far,
-            -8.0, 8.0, -6.0, 6.0, 1.0, 10.0,
-        );
-        dbg!(&ortho);
-        ortho * view
-        // projection * view
-    }
-
     fn on_event(&mut self, event: &WindowEvent) -> EventResponse {
         let mut resp = self.egui.on_event(event);
 
         let mut consume = false;
 
         if !resp.consumed {
-            println!("egui did not consume");
             if let WindowEvent::KeyboardInput { input, .. } = event {
                 if let Some(key) = input.virtual_keycode {
                     use winit::event::VirtualKeyCode as Key;
@@ -75,10 +49,14 @@ impl CubeExample {
 
                     match key {
                         Key::Up => {
-                            self.camera.nudge(Vec2::unit_y());
+                            let scale = 1.1;
+                            self.camera.scale_uniformly_around(Vec2::new(-0.5, -0.5), scale);
+                            // self.camera.nudge(Vec2::unit_y());
                         }
                         Key::Down => {
-                            self.camera.nudge(-Vec2::unit_y());
+                            let scale = 1.0 / 1.1;
+                            self.camera.scale_uniformly_around(Vec2::new(-0.5, -0.5), scale);
+                            // self.camera.nudge(-Vec2::unit_y());
                         }
                         Key::Left => {
                             self.camera.nudge(Vec2::unit_x());
@@ -193,7 +171,6 @@ impl CubeExample {
 
         let uniform_data = camera.to_matrix();
 
-        let uniform_data = Self::generate_matrix(4.0 / 3.0);
         let uniform_buf = state.device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor {
                 label: Some("Uniform Buffer"),
