@@ -17,13 +17,10 @@ pub struct TouchHandler {
 impl TouchHandler {
     pub fn take<'a>(&'a mut self) -> impl Iterator<Item = TouchOutput> + 'a {
         self.touches.iter_mut().map(|touch| {
-            let mut pos = touch.start;
-            let mut end = touch.end;
+            let pos = touch.start;
+            let end = touch.end;
             touch.start = end;
             
-            // flip to match world Y axis
-            pos.y *= -1.0;
-            end.y *= -1.0;
             let delta = end - pos;
 
             TouchOutput {
@@ -48,12 +45,8 @@ impl TouchHandler {
             let [w, h] = window_dims;
             let size = Vec2::new(w as f32, h as f32);
 
-            // let pos = loc / size;
-            let pos = Vec2::broadcast(-0.5) + (2.0 * loc) / size;
-            // let pos = Vec2::new(0.5, 0.5) + loc / (size * 2.0);
-            // let pos = loc / (size * 2.0);
-
-            println!("{pos:?}");
+            let pos = loc / size;
+            dbg!(&pos);
 
             use winit::event::TouchPhase as Phase;
 
@@ -92,6 +85,14 @@ pub struct TouchOutput {
     pub delta: Vec2,
 }
 
+impl TouchOutput {
+    pub fn flip_y(mut self) -> Self {
+        self.pos.y *= -1.0;
+        self.delta.y *= -1.0;
+        self
+    }
+}
+
 pub struct DynamicCamera2d {
     pub size: Vec2,
     pub center: Vec2,
@@ -128,11 +129,13 @@ impl DynamicCamera2d {
     }
 
     pub fn resize_relative(&mut self, scale: Vec2) {
-        println!("resizing with {scale:?}");
+        // println!("resizing with {scale:?}");
         self.size *= scale;
     }
 
     pub fn blink(&mut self, n: Vec2) {
+        let size = self.size;
+        println!("blink with {n:?} * {size:?} = {:?}", n * self.size);
         self.center += n * self.size;
         self.prev_center = self.center;
     }
@@ -159,9 +162,9 @@ impl DynamicCamera2d {
     }
 
     pub fn to_matrix(&self) -> Mat4 {
-        let right = self.size.x;
+        let right = self.size.x / 2.0;
         let left = -right;
-        let top = self.size.y;
+        let top = self.size.y / 2.0;
         let bottom = -top;
 
         let near = 1.0;

@@ -1,5 +1,5 @@
 use egui_winit::EventResponse;
-use raving_wgpu::camera::{DynamicCamera2d, TouchHandler};
+use raving_wgpu::camera::{DynamicCamera2d, TouchHandler, TouchOutput};
 use raving_wgpu::gui::EguiCtx;
 use std::collections::HashMap;
 use wgpu::util::DeviceExt;
@@ -34,6 +34,8 @@ struct CubeExample {
     index_buf: wgpu::Buffer,
 
     draw_node: NodeId,
+
+    mid: Option<Vec2>,
 }
 
 impl CubeExample {
@@ -117,25 +119,77 @@ impl CubeExample {
     }
 
     fn update(&mut self, window: &winit::window::Window, dt: f32) {
+        let dims = window.inner_size();
+        let size = Vec2::new(dims.width as f32, dims.height as f32);
+
         self.egui.run(window, |ctx| {
             Self::camera_window(ctx, &self.camera);
+
+            let painter = ctx.debug_painter();
+
+            painter.circle_stroke(
+                egui::pos2(200.0, 200.0),
+                10.0,
+                egui::Stroke::new(1.0, egui::Color32::WHITE),
+            );
+
+            if let Some(mid) = self.mid {
+                // println!("{mid:?}");
+
+                let p = egui::pos2(mid.x, mid.y);
+                // dbg!(&(p.x, p.y));
+                painter.circle_stroke(
+                    p,
+                    5.0,
+                    egui::Stroke::new(1.0, egui::Color32::WHITE),
+                );
+            }
         });
 
-        let mut touches = self.touch.take();
+        let mut touches = self.touch.take().map(TouchOutput::flip_y);
 
         let first = touches.next();
         let second = touches.next();
+
+        let mut remove = true;
 
         match (first, second) {
             (Some(mut touch), None) => {
                 // flip to flick in correct direction
                 touch.delta *= -1.0;
                 self.camera.blink(touch.delta);
+
+                // let pos = (touch.pos - Vec2::new(0.5, 0.5)) * size;
+                let mut pos = touch.pos  * size * 0.5;
+                // pos.y *= -1.0;
+                // dbg!(&pos);
+                self.mid = Some(pos);
+                remove = false;
             }
             (Some(mut fst), Some(mut snd)) => {
                 // pinch to zoom
+                let del = snd.pos - fst.pos;
+                let mid = fst.pos + del * 0.5;
+
+                let f2 = fst.pos + fst.delta * dt;
+                let s2 = snd.pos + snd.delta * dt;
+                let del2 = s2 - f2;
+
+                // dbg!(&(del.mag(), del2.mag()));
+                let scale = del2.mag() / del.mag();
+                // dbg!(&scale);
+
+                let mid_ = (mid - Vec2::new(0.5, 0.5)) * size;
+                // dbg!(&mid_);
+                self.mid = Some(mid_);
+                remove = false;
+
+                self.camera.scale_uniformly_around(mid, scale);
             }
             _ => (), // nothing
+        }
+        if remove {
+            self.mid = None;
         }
 
         self.camera.update(dt);
@@ -238,6 +292,7 @@ impl CubeExample {
             touch,
 
             egui,
+            mid: None,
         };
 
         Ok(result)
