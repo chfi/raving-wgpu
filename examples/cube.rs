@@ -151,6 +151,18 @@ impl CubeExample {
         let first = touches.next();
         let second = touches.next();
 
+        // as long as there's one touch, we want to apply some friction
+        if first.is_some() {
+            self.camera.stop();
+        } else {
+            println!("not stopping! displacement is: {:?}", self.camera.displacement());
+        }
+
+        self.camera.update(dt);
+
+        // applying touches after update!
+        // this makes flicking work without adding additional state
+
         let mut remove = true;
 
         match (first, second) {
@@ -158,6 +170,11 @@ impl CubeExample {
                 // flip to flick in correct direction
                 touch.delta *= -1.0;
                 self.camera.blink(touch.delta);
+                // self.camera.nudge(touch.delta);
+                
+                if touch.delta.mag() != 0.0 {
+                    println!("touch delta mag: {}", touch.delta.mag());
+                }
 
                 // let pos = (touch.pos - Vec2::new(0.5, 0.5)) * size;
                 let mut pos = touch.pos  * size * 0.5;
@@ -192,7 +209,6 @@ impl CubeExample {
             self.mid = None;
         }
 
-        self.camera.update(dt);
     }
 
     fn init(

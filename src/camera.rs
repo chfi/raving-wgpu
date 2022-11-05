@@ -46,7 +46,7 @@ impl TouchHandler {
             let size = Vec2::new(w as f32, h as f32);
 
             let pos = loc / size;
-            dbg!(&pos);
+            // dbg!(&pos);
 
             use winit::event::TouchPhase as Phase;
 
@@ -111,6 +111,10 @@ impl DynamicCamera2d {
         }
     }
 
+    pub fn displacement(&self) -> Vec2 {
+        self.center - self.prev_center
+    }
+
     /// `fix` should be relative to center, in normalized screen coordinates
     pub fn scale_uniformly_around(&mut self, fix: Vec2, scale: f32) {
         let n = fix.normalized();
@@ -135,13 +139,14 @@ impl DynamicCamera2d {
 
     pub fn blink(&mut self, n: Vec2) {
         let size = self.size;
-        println!("blink with {n:?} * {size:?} = {:?}", n * self.size);
+        // println!("blink with {n:?} * {size:?} = {:?}", n * self.size);
         self.center += n * self.size;
-        self.prev_center = self.center;
+        // self.prev_center = self.center;
     }
 
     pub fn nudge(&mut self, n: Vec2) {
         self.accel += n * self.size * self.size;
+        // self.accel += n * self.size;
     }
 
     pub fn update(&mut self, dt: f32) {
