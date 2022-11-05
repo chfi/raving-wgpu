@@ -1,4 +1,85 @@
+use std::collections::VecDeque;
+
 use ultraviolet::{Isometry3, Mat4, Rotor3, Vec2, Vec3};
+use winit::event::WindowEvent;
+
+pub struct TouchState {
+    id: u64,
+    start: Vec2,
+    end: Vec2,
+}
+
+#[derive(Default)]
+pub struct TouchHandler {
+    touches: VecDeque<TouchState>,
+}
+
+impl TouchHandler {
+    pub fn take<'a>(&'a mut self) -> impl Iterator<Item = TouchOutput> + 'a {
+        self.touches.iter_mut().map(|touch| {
+            let pos = touch.start;
+            let delta = touch.end - touch.start;
+            touch.start = touch.end;
+            TouchOutput {
+                pos,
+                delta
+            }
+        })
+    }
+    
+    // returns `true` if consumed
+    pub fn on_event(
+        &mut self,
+        window_dims: [u32; 2],
+        event: &WindowEvent,
+    ) -> bool {
+        if let WindowEvent::Touch(touch) = event {
+            let id = touch.id;
+
+            let loc = touch.location;
+            let loc = Vec2::new(loc.x as f32, loc.y as f32);
+
+            let [w, h] = window_dims;
+            let size = Vec2::new(w as f32, h as f32);
+
+            let pos = loc / size;
+
+            use winit::event::TouchPhase as Phase;
+
+            match touch.phase {
+                Phase::Started => {
+                    self.touches.push_back(TouchState {
+                        id,
+                        start: pos,
+                        end: pos,
+                    });
+                }
+                Phase::Moved => {
+                    if let Some(touch) =
+                        self.touches.iter_mut().find(|t| t.id == id)
+                    {
+                        touch.end = pos;
+                    }
+                }
+                Phase::Ended | Phase::Cancelled => {
+                    self.touches.iter().position(|t| t.id == id).map(|i| {
+                        self.touches.remove(i);
+                    });
+                }
+            }
+
+            return true;
+        }
+
+        false
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TouchOutput {
+    pos: Vec2,
+    delta: Vec2,
+}
 
 pub struct DynamicCamera2d {
     pub size: Vec2,
@@ -50,7 +131,7 @@ impl DynamicCamera2d {
         self.center += v + self.accel * dt * dt;
         self.accel = Vec2::zero();
     }
-    
+
     pub fn set_position(&mut self, center: Vec2) {
         self.center = center;
         self.prev_center = center;
@@ -77,8 +158,8 @@ impl DynamicCamera2d {
         let p = self.center;
         let p_ = Vec3::new(p.x, p.y, 5.0);
 
-        let view = Isometry3::new(p_, Rotor3::identity());
+        let view = Isometry3::new(p_, Rotor3::identity()).inversed();
 
-        proj * view.into_homogeneous_matrix().inversed()
+        proj * view.into_homogeneous_matrix()
     }
 }
