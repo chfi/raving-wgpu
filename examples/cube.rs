@@ -1,8 +1,8 @@
 use egui_winit::EventResponse;
-use raving_wgpu::camera::DynamicCamera2d;
+use raving_wgpu::camera::{DynamicCamera2d, TouchHandler};
 use raving_wgpu::gui::EguiCtx;
 use std::collections::HashMap;
-use wgpu::util::{DeviceExt};
+use wgpu::util::DeviceExt;
 use winit::event::{ElementState, Event, VirtualKeyCode, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoopWindowTarget};
 
@@ -25,6 +25,7 @@ struct CubeExample {
     egui: EguiCtx,
 
     camera: DynamicCamera2d,
+    touch: TouchHandler,
 
     graph_scalars: rhai::Map,
 
@@ -36,12 +37,20 @@ struct CubeExample {
 }
 
 impl CubeExample {
-    fn on_event(&mut self, event: &WindowEvent) -> EventResponse {
+    fn on_event(
+        &mut self,
+        window_dims: [u32; 2],
+        event: &WindowEvent,
+    ) -> EventResponse {
         let mut resp = self.egui.on_event(event);
 
         let mut consume = false;
 
         if !resp.consumed {
+            if self.touch.on_event(window_dims, event) {
+                consume = true;
+            }
+
             if let WindowEvent::KeyboardInput { input, .. } = event {
                 if let Some(key) = input.virtual_keycode {
                     use winit::event::VirtualKeyCode as Key;
@@ -50,12 +59,18 @@ impl CubeExample {
                     match key {
                         Key::Up => {
                             let scale = 1.1;
-                            self.camera.scale_uniformly_around(Vec2::new(-0.5, -0.5), scale);
+                            self.camera.scale_uniformly_around(
+                                Vec2::new(-0.5, -0.5),
+                                scale,
+                            );
                             // self.camera.nudge(Vec2::unit_y());
                         }
                         Key::Down => {
                             let scale = 1.0 / 1.1;
-                            self.camera.scale_uniformly_around(Vec2::new(-0.5, -0.5), scale);
+                            self.camera.scale_uniformly_around(
+                                Vec2::new(-0.5, -0.5),
+                                scale,
+                            );
                             // self.camera.nudge(-Vec2::unit_y());
                         }
                         Key::Left => {
@@ -106,8 +121,24 @@ impl CubeExample {
             Self::camera_window(ctx, &self.camera);
         });
 
-        self.camera.update(dt);
+        let mut touches = self.touch.take();
 
+        let first = touches.next();
+        let second = touches.next();
+
+        match (first, second) {
+            (Some(mut touch), None) => {
+                // flip to flick in correct direction
+                touch.delta *= -1.0;
+                self.camera.blink(touch.delta);
+            }
+            (Some(mut fst), Some(mut snd)) => {
+                // pinch to zoom
+            }
+            _ => (), // nothing
+        }
+
+        self.camera.update(dt);
     }
 
     fn init(
@@ -193,6 +224,8 @@ impl CubeExample {
 
         let egui = EguiCtx::init(event_loop, state, None);
 
+        let touch = TouchHandler::default();
+
         let result = CubeExample {
             graph,
             graph_scalars: rhai::Map::default(),
@@ -202,6 +235,7 @@ impl CubeExample {
             draw_node,
 
             camera,
+            touch,
 
             egui,
         };
@@ -320,7 +354,6 @@ async fn run() -> anyhow::Result<()> {
     let (event_loop, window, mut state) = raving_wgpu::initialize().await?;
 
     let size = window.inner_size();
-
     let dims = [size.width, size.height];
 
     let mut cube = CubeExample::init(&event_loop, &state)?;
@@ -335,7 +368,9 @@ async fn run() -> anyhow::Result<()> {
                 ref event,
                 window_id,
             } => {
-                let egui_resp = cube.on_event(event);
+                let size = window.inner_size();
+                let dims = [size.width, size.height];
+                let egui_resp = cube.on_event(dims, event);
 
                 if !egui_resp.consumed {
                     match event {
@@ -361,8 +396,14 @@ async fn run() -> anyhow::Result<()> {
 
                                 state.resize(*phys_size);
 
-                                let old = Vec2::new(old.width as f32, old.height as f32);
-                                let new = Vec2::new(new.width as f32, new.height as f32);
+                                let old = Vec2::new(
+                                    old.width as f32,
+                                    old.height as f32,
+                                );
+                                let new = Vec2::new(
+                                    new.width as f32,
+                                    new.height as f32,
+                                );
 
                                 let div = new / old;
 

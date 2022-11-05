@@ -17,9 +17,15 @@ pub struct TouchHandler {
 impl TouchHandler {
     pub fn take<'a>(&'a mut self) -> impl Iterator<Item = TouchOutput> + 'a {
         self.touches.iter_mut().map(|touch| {
-            let pos = touch.start;
-            let delta = touch.end - touch.start;
-            touch.start = touch.end;
+            let mut pos = touch.start;
+            let mut end = touch.end;
+            touch.start = end;
+            
+            // flip to match world Y axis
+            pos.y *= -1.0;
+            end.y *= -1.0;
+            let delta = end - pos;
+
             TouchOutput {
                 pos,
                 delta
@@ -42,7 +48,12 @@ impl TouchHandler {
             let [w, h] = window_dims;
             let size = Vec2::new(w as f32, h as f32);
 
-            let pos = loc / size;
+            // let pos = loc / size;
+            let pos = Vec2::broadcast(-0.5) + (2.0 * loc) / size;
+            // let pos = Vec2::new(0.5, 0.5) + loc / (size * 2.0);
+            // let pos = loc / (size * 2.0);
+
+            println!("{pos:?}");
 
             use winit::event::TouchPhase as Phase;
 
@@ -77,8 +88,8 @@ impl TouchHandler {
 
 #[derive(Debug, Clone, Copy)]
 pub struct TouchOutput {
-    pos: Vec2,
-    delta: Vec2,
+    pub pos: Vec2,
+    pub delta: Vec2,
 }
 
 pub struct DynamicCamera2d {
@@ -119,6 +130,11 @@ impl DynamicCamera2d {
     pub fn resize_relative(&mut self, scale: Vec2) {
         println!("resizing with {scale:?}");
         self.size *= scale;
+    }
+
+    pub fn blink(&mut self, n: Vec2) {
+        self.center += n * self.size;
+        self.prev_center = self.center;
     }
 
     pub fn nudge(&mut self, n: Vec2) {
