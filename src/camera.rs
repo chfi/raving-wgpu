@@ -87,8 +87,11 @@ pub struct TouchOutput {
 
 impl TouchOutput {
     pub fn flip_y(mut self) -> Self {
-        self.pos.y *= -1.0;
+        // i think this is correct...
+        self.pos.y = 1.0 - self.pos.y;
         self.delta.y *= -1.0;
+        // self.delta.y = 1.0 - self.delta.y;
+        // self.pos.y *= -1.0;
         self
     }
 }
@@ -117,19 +120,22 @@ impl DynamicCamera2d {
 
     /// `fix` should be relative to center, in normalized screen coordinates
     pub fn scale_uniformly_around(&mut self, fix: Vec2, scale: f32) {
-        let n = fix.normalized();
+        let n = self.center - fix;
+        dbg!(&fix);
+        dbg!(&n);
 
         // the current world distance
-        let dist = (fix * self.size).mag();
+        // let dist = (fix * self.size).mag();
         // the new world distance
-        let n_dist = dist * scale;
+        // let n_dist = dist * scale;
 
-        let diff = n_dist / dist;
         let sign = (scale - 1.0).signum();
 
-        self.center -= (n * diff) * sign;
+        // self.center -= (n * scale) * sign;
         self.prev_center = self.center;
-        self.size = self.size * scale;
+
+        let size = self.size * scale;
+        self.size += size;
     }
 
     pub fn resize_relative(&mut self, scale: Vec2) {

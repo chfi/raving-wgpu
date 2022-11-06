@@ -34,8 +34,6 @@ struct CubeExample {
     index_buf: wgpu::Buffer,
 
     draw_node: NodeId,
-
-    mid: Option<Vec2>,
 }
 
 impl CubeExample {
@@ -122,21 +120,69 @@ impl CubeExample {
         let dims = window.inner_size();
         let size = Vec2::new(dims.width as f32, dims.height as f32);
 
+        let mut touches = self
+            .touch
+            .take()
+            .map(TouchOutput::flip_y)
+            .collect::<Vec<_>>();
+
         self.egui.run(window, |ctx| {
             Self::camera_window(ctx, &self.camera);
 
             let painter = ctx.debug_painter();
 
-            painter.circle_stroke(
-                egui::pos2(200.0, 200.0),
-                10.0,
-                egui::Stroke::new(1.0, egui::Color32::WHITE),
-            );
+            // painter.circle_stroke(
+            //     egui::pos2(200.0, 200.0),
+            //     10.0,
+            //     egui::Stroke::new(1.0, egui::Color32::WHITE),
+            // );
 
-            if let Some(mid) = self.mid {
-                // println!("{mid:?}");
+            let touch_scr = touches.iter().map(|t| {
+                let mut p = t.pos;
+                p.y = 1.0 - p.y;
+                p
+            });
 
-                let p = egui::pos2(mid.x, mid.y);
+            let mut prev_pt = None;
+
+            for tch in touch_scr {
+                let p = tch * size;
+                let p = egui::pos2(p.x, p.y);
+                let stroke =egui::Stroke::new(1.0, egui::Color32::WHITE);
+                // dbg!(&(p.x, p.y));
+                painter.circle_stroke(
+                    p,
+                    5.0,
+                    stroke,
+                );
+
+                if let Some(prev) = prev_pt {
+                    painter.line_segment([prev, p], stroke);
+                }
+                prev_pt = Some(p);
+            }
+
+            let mut touches = touches.iter();
+
+            let p1 = touches.next();
+            let p2 = touches.next();
+
+            if let Some(p) = p1 {
+                let mut p_ = p.pos;
+                p_.y = 1.0 - p_.y;
+
+                let text = format!("{p_:?}");
+                println!("{text}");
+                painter.text(
+                    egui::pos2(400.0, 50.0),
+                    egui::Align2::CENTER_CENTER,
+                    &text,
+                    egui::FontId::monospace(12.0),
+                    egui::Color32::WHITE,
+                );
+
+                let p_ = p_ * size;
+                let p = egui::pos2(p_.x, p_.y);
                 // dbg!(&(p.x, p.y));
                 painter.circle_stroke(
                     p,
@@ -146,17 +192,19 @@ impl CubeExample {
             }
         });
 
-        let mut touches = self.touch.take().map(TouchOutput::flip_y);
+        if !touches.is_empty() {
+            // if first.is_some() {
+            self.camera.stop();
+            // } else {
+            // println!("not stopping! displacement is: {:?}", self.camera.displacement());
+            // }
+        }
 
+        let mut touches = touches.into_iter();
         let first = touches.next();
         let second = touches.next();
 
         // as long as there's one touch, we want to apply some friction
-        if first.is_some() {
-            self.camera.stop();
-        } else {
-            println!("not stopping! displacement is: {:?}", self.camera.displacement());
-        }
 
         self.camera.update(dt);
 
@@ -171,22 +219,26 @@ impl CubeExample {
                 touch.delta *= -1.0;
                 self.camera.blink(touch.delta);
                 // self.camera.nudge(touch.delta);
-                
+
                 if touch.delta.mag() != 0.0 {
                     println!("touch delta mag: {}", touch.delta.mag());
                 }
 
                 // let pos = (touch.pos - Vec2::new(0.5, 0.5)) * size;
-                let mut pos = touch.pos  * size * 0.5;
-                // pos.y *= -1.0;
-                // dbg!(&pos);
-                self.mid = Some(pos);
-                remove = false;
+                let mut pos = touch.pos * size * 0.5;
             }
             (Some(mut fst), Some(mut snd)) => {
+                fst.pos *= size;
+                fst.delta *= size;
+                snd.pos *= size;
+                snd.delta *= size;
                 // pinch to zoom
                 let del = snd.pos - fst.pos;
                 let mid = fst.pos + del * 0.5;
+
+                // println!("fst.pos: {:?}\tsnd.pos: {:?}", fst.pos, snd.pos);
+
+                // dbg!(&(del, mid));
 
                 let f2 = fst.pos + fst.delta * dt;
                 let s2 = snd.pos + snd.delta * dt;
@@ -194,21 +246,21 @@ impl CubeExample {
 
                 // dbg!(&(del.mag(), del2.mag()));
                 let scale = del2.mag() / del.mag();
+                // let scale = (scale * scale) * std::f32::consts::PI;
                 // dbg!(&scale);
 
-                let mid_ = (mid - Vec2::new(0.5, 0.5)) * size;
-                // dbg!(&mid_);
-                self.mid = Some(mid_);
-                remove = false;
+                let mid = mid - Vec2::new(0.5, 0.5);
 
-                self.camera.scale_uniformly_around(mid, scale);
+                // dbg!(&mid);
+                let mid_ = mid * size;
+                // dbg!(&mid__);
+
+
+                self.camera.scale_uniformly_around(Vec2::zero(), scale);
+                // self.camera.scale_uniformly_around(mid, scale);
             }
             _ => (), // nothing
         }
-        if remove {
-            self.mid = None;
-        }
-
     }
 
     fn init(
@@ -308,7 +360,6 @@ impl CubeExample {
             touch,
 
             egui,
-            mid: None,
         };
 
         Ok(result)
