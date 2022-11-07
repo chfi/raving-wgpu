@@ -7,6 +7,7 @@ use std::{
 };
 
 fn main() {
+    /*
     if Command::new("glslc").output().is_err() {
         eprintln!("Error compiling shaders: 'glslc' not found, do you have the Vulkan SDK installed?");
         eprintln!("Get it at https://vulkan.lunarg.com/");
@@ -20,6 +21,7 @@ fn main() {
     }
 
     compile_shaders(&shader_files)
+    */
 }
 
 fn find_shader_files() -> Vec<PathBuf> {
