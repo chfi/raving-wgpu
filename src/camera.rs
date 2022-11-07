@@ -1,7 +1,49 @@
 use std::collections::VecDeque;
 
-use ultraviolet::{Isometry3, Mat4, Rotor3, Vec2, Vec3};
+use ultraviolet::{f32x4, Isometry3, Mat4, Rotor3, Vec2, Vec3};
 use winit::event::WindowEvent;
+
+// returns the distances in clockwise order from top: [U, R, D, L]
+// distances *are* signed
+pub fn dist_to_rect_sides(
+    rect_center: Vec2,
+    rect_size: Vec2,
+    p: Vec2,
+) -> f32x4 {
+    let o = rect_center;
+    let s = rect_size;
+    // let p = o + p;
+    // let p = p + (o - s * 0.5);
+
+    let w2 = s.x / 2.0;
+    let h2 = s.y / 2.0;
+
+    let base = f32x4::new([o.y, o.x, o.y, o.x]);
+    let ds = f32x4::new([-h2, w2, h2, -w2]);
+    let p_ = f32x4::new([p.y, p.x, p.y, p.x]);
+    let p_ = p_ - base;
+
+    let sides = ds;
+
+    let px = p.x;
+    let py = p.y;
+    let sarray = sides.to_array();
+    // println!("{px:.2}, {py:.2} - {sarray:.4?}");
+
+    // let top = o.y - h2;
+
+    // let result = sides - p_;
+
+    // result.flip_signs()
+    // result * f32x4::flip_signs(self, signs)
+
+    // let darray = p_.to_array();
+
+    // println!("{px:.2}, {py:.2} - {darray:.4?}");
+
+    sides - p_
+    // p_ - sides
+}
 
 pub struct TouchState {
     id: u64,
@@ -122,66 +164,39 @@ impl DynamicCamera2d {
         self.center - self.prev_center
     }
 
-    // all positions and deltas should be given in world units,
-    // centered on the view
-    // i.e. calling this with `anchor = Vec2::zero()` results in
-    // zooming centered on the view
     pub fn pinch_anchored(&mut self, anchor: Vec2, start: Vec2, end: Vec2) {
         let d0 = start - anchor;
+        let d = end - start;
+        /*
         let n0 = d0.normalized();
 
-        let d = end - start;
         let mut n = d.normalized();
         if d.mag() == 0.0 {
             n = Vec2::zero();
         }
-
-        /*
-        if anchor.x > 0.0 {
-            if anchor.y > 0.0 {
-                //
-            } else {
-                //
-            }
-        } else {
-            if anchor.y > 0.0 {
-                //
-            } else {
-                //
-            }
-        }
-
-        let r_xy = self.size.x / self.size.y;
-        let r_yx = self.size.y / self.size.x;
-
-        if n.y > 0.0 {
-            // if n.x > 0.0 {
-            // self.size.x += 
-                // dbg!(&n);
-            // } else {
-                // dbg!(&n);
-            // }
-        } else {
-            // if n.x > 0.0 {
-                // dbg!(&n);
-            // } else {
-                // dbg!(&n);
-            // }
-        }
         */
-        
-        let r_xy = self.size.x / self.size.y;
-        let r_yx = self.size.y / self.size.x;
 
-        let mut d = d;
+        // let s_dists = dist_to_rect_sides(self.center, self.size, start);
+        // dbg!(s_dists.to_array());
 
-        // if d.x.abs() < d.y.abs() {
-            // d.y = r_yx * d.x;
-            // d.y = r_xy * d.x;
-        // } else {
-            // d.x = r_xy * d.y;
-            // d.x = r_yx * d.y;
-        // }
+        let p = start;
+
+        // let top = self.size.y - start.y;
+        // let bottom =
+
+        // horizontal component
+        let dw = d.x.abs();
+        let t = (p.y - self.size.y) / self.size.y;
+        // let dh = d.
+
+        if d.x > 0.0 {
+            // extrude to the right, then equalize
+            self.size.x += dw;
+        } else {
+            // extrude to the left, then equalize
+            self.size.x += dw;
+            self.center.x -= dw;
+        }
 
         let size = self.size;
         self.size -= d * size;

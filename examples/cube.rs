@@ -229,9 +229,26 @@ impl CubeExample {
                 self.camera.blink(touch.delta);
                 // self.camera.nudge(touch.delta);
 
-                if touch.delta.mag() != 0.0 {
-                    println!("touch delta mag: {}", touch.delta.mag());
-                }
+                // if touch.delta.mag() != 0.0 {
+                // println!("touch delta mag: {}", touch.delta.mag());
+                // }
+
+                let mut pos = touch.pos - Vec2::new(0.5, 0.5);
+                pos *= self.camera.size;
+                pos += self.camera.center;
+
+
+                let s_dists = raving_wgpu::camera::dist_to_rect_sides(
+                    self.camera.center,
+                    self.camera.size,
+                    pos,
+                    // touch.pos,
+                );
+                let darray = s_dists.to_array();
+                let px = pos.x;
+                let py = pos.y;
+                println!("{px:.2}, {py:.2} - {darray:.4?}");
+                // dbg!(s_dists.to_array());
 
                 // let pos = (touch.pos - Vec2::new(0.5, 0.5)) * size;
                 let mut pos = touch.pos * size * 0.5;
