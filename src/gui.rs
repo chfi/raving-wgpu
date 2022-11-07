@@ -4,7 +4,46 @@ use egui_wgpu::renderer::ScreenDescriptor;
 use wgpu::CommandEncoder;
 use winit::{event_loop::EventLoopWindowTarget, window::Window};
 
+use crossbeam::atomic::AtomicCell;
+use std::sync::Arc;
+
 use crate::State;
+
+pub type DebugWidget = Arc<
+    dyn Fn(&mut egui::Ui) -> egui::InnerResponse<()> + Send + Sync + 'static,
+>;
+
+pub struct DebugWindow {
+    title: String,
+
+    slots: Vec<(String, DebugWidget)>,
+}
+
+impl DebugWindow {
+    pub fn initialize(title: &str) -> Self {
+        Self {
+            title: title.to_string(),
+            slots: Vec::new(),
+        }
+    }
+
+    pub fn push_slot<F>(&mut self, name: &str, widget: F)
+    where F: Fn(&mut egui::Ui) -> egui::InnerResponse<()> + Send + Sync + 'static,
+    {
+        let widget = Arc::new(widget) as DebugWidget;
+        self.slots.push((name.to_string(), widget));
+    }
+
+    pub fn show(&self, ctx: &egui::Context) {
+        egui::Window::new(&self.title).show(ctx, |ui| {
+            ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+                for (_name, widget) in self.slots.iter() {
+                    let _resp = widget(ui);
+                }
+            })
+        });
+    }
+}
 
 pub struct EguiCtx {
     ctx: egui::Context,
