@@ -254,18 +254,6 @@ impl CubeExample {
                 // let mut pos = touch.pos * size * 0.5;
             }
             (Some(mut fst), Some(mut snd)) => {
-                let cam_size = self.camera.size;
-
-                let n_ = (snd.pos - fst.pos).normalized();
-
-                let v = n_.dot(snd.delta);
-
-                let d = v;
-
-                // dbg!(&d);
-
-                // self.camera.size -= d * cam_size;
-                
                 let mut fst_pos = fst.pos - Vec2::new(0.5, 0.5);
                 fst_pos.y *= -1.0;
                 fst_pos *= self.camera.size;
@@ -276,10 +264,19 @@ impl CubeExample {
                 snd_pos *= self.camera.size;
                 snd_pos += self.camera.center;
 
+                fst.delta *= self.camera.size;
+                snd.delta *= self.camera.size;
+
                 self.camera.pinch_anchored(
                     fst_pos,
                     snd_pos,
                     snd_pos + snd.delta,
+                );
+                
+                self.camera.pinch_anchored(
+                    snd_pos,
+                    fst_pos,
+                    fst_pos + fst.delta,
                 );
             }
             _ => (), // nothing

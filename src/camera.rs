@@ -175,13 +175,8 @@ impl DynamicCamera2d {
 
         let p = start;
 
-        // let top = self.size.y - start.y;
-        // let bottom =
-
-        // horizontal component
         let dw = d.x.abs();
-        // let t = (p.y - self.size.y) / self.size.y;
-        // let dh = d.
+        let dh = d.y.abs();
 
         let split_h = s_u / (s_u + s_d);
         let split_v = s_l / (s_l + s_r);
@@ -189,36 +184,37 @@ impl DynamicCamera2d {
         let r_xy = self.size.x / self.size.y;
         let r_yx = self.size.y / self.size.x;
 
-        // let prop_up = t;
-        // let prop_down = 1.0 - t;
-
         let old_size = self.size;
-
-
-        // dbg!(&(prop_up, prop_down));
-        dbg!(&split_h);
 
         if d.x > 0.0 {
             // extrude to the right, then equalize
             self.size.x += dw;
-
-            let new_h = self.size.x * r_yx;
-            let diff = new_h - old_size.y;
-            self.size.y = new_h;
-
-            self.center.y -= diff * split_h;
-
         } else {
             // extrude to the left, then equalize
             self.size.x += dw;
             self.center.x -= dw;
-            
-            let new_h = self.size.x * r_yx;
-            let diff = new_h - old_size.y;
-            self.size.y = new_h;
-
-            self.center.y -= diff * split_h;
         }
+
+        let new_h = self.size.x * r_yx;
+        let diff = new_h - old_size.y;
+        self.size.y = new_h;
+
+        self.center.y -= diff * split_h;
+
+        let old_size = self.size;
+
+        if d.y > 0.0 {
+            self.size.y += dh;
+        } else {
+            self.size.y += dh;
+            self.center.y -= dh;
+        }
+
+        let new_w = self.size.y * r_xy;
+        let diff = new_w - old_size.x;
+        self.size.x = new_w;
+
+        self.center.x -= diff * split_v;
 
     }
 
