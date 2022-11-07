@@ -20,16 +20,13 @@ impl TouchHandler {
             let pos = touch.start;
             let end = touch.end;
             touch.start = end;
-            
+
             let delta = end - pos;
 
-            TouchOutput {
-                pos,
-                delta
-            }
+            TouchOutput { pos, delta }
         })
     }
-    
+
     // returns `true` if consumed
     pub fn on_event(
         &mut self,
@@ -118,11 +115,28 @@ impl DynamicCamera2d {
         self.center - self.prev_center
     }
 
+    // all positions and deltas should be given in world units,
+    // centered on the view
+    pub fn pinch(
+        &mut self,
+        start_0: Vec2,
+        end_0: Vec2,
+        start_1: Vec2,
+        end_1: Vec2,
+    ) {
+        let aspect = self.size.x / self.size.y;
+        // map position axes to view sides
+
+
+
+        // apply deltas to view sides
+    }
+
     /// `fix` should be relative to center, in normalized screen coordinates
     pub fn scale_uniformly_around(&mut self, fix: Vec2, scale: f32) {
         let n = self.center - fix;
-        dbg!(&fix);
-        dbg!(&n);
+        // dbg!(&fix);
+        // dbg!(&n);
 
         // the current world distance
         // let dist = (fix * self.size).mag();

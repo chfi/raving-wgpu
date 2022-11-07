@@ -233,31 +233,24 @@ impl CubeExample {
                 snd.pos *= size;
                 snd.delta *= size;
                 // pinch to zoom
-                let del = snd.pos - fst.pos;
-                let mid = fst.pos + del * 0.5;
-
-                // println!("fst.pos: {:?}\tsnd.pos: {:?}", fst.pos, snd.pos);
-
-                // dbg!(&(del, mid));
 
                 let f2 = fst.pos + fst.delta * dt;
                 let s2 = snd.pos + snd.delta * dt;
-                let del2 = s2 - f2;
 
-                // dbg!(&(del.mag(), del2.mag()));
-                let scale = del2.mag() / del.mag();
-                // let scale = (scale * scale) * std::f32::consts::PI;
-                // dbg!(&scale);
+                let min1 = fst.pos.min_by_component(snd.pos);
+                let max1 = fst.pos.max_by_component(snd.pos);
 
-                let mid = mid - Vec2::new(0.5, 0.5);
+                let min2 = f2.min_by_component(s2);
+                let max2 = f2.max_by_component(s2);
 
-                // dbg!(&mid);
-                let mid_ = mid * size;
-                // dbg!(&mid__);
+                let rect_orig = max1 - min1;
+                let rect_new = max2 - min2;
 
+                let d = rect_new - rect_orig;
 
-                self.camera.scale_uniformly_around(Vec2::zero(), scale);
-                // self.camera.scale_uniformly_around(mid, scale);
+                let mid = rect_orig + d * 0.5;
+
+                self.camera.size -= d;
             }
             _ => (), // nothing
         }
