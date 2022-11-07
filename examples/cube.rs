@@ -114,6 +114,10 @@ impl CubeExample {
             let width = camera.size.x;
             let height = camera.size.y;
             ui.label(&format!("size: ({width}, {height})"));
+
+            if height > 0f32 {
+                ui.label(&format!("aspect: {:4}", width / height));
+            }
         });
     }
 
@@ -464,7 +468,6 @@ impl CubeExample {
     }
 }
 
-
 async fn run() -> anyhow::Result<()> {
     let (event_loop, window, mut state) = raving_wgpu::initialize().await?;
 
@@ -577,11 +580,10 @@ pub fn main() {
         if trace::is_trace_enabled() {
             _trace = trace::Section::new("ndk-rs example main").unwrap();
         }
-        
-    
-    log::warn!("sleeping to handle android...");
-    std::thread::sleep(std::time::Duration::from_millis(1000));
-    log::warn!("awake!");
+
+        log::warn!("sleeping to handle android...");
+        std::thread::sleep(std::time::Duration::from_millis(1000));
+        log::warn!("awake!");
     }
 
     #[cfg(not(target_os = "android"))]
@@ -590,7 +592,6 @@ pub fn main() {
             .filter_level(log::LevelFilter::Warn)
             .init();
     }
-
 
     if let Err(e) = pollster::block_on(run()) {
         log::error!("{:?}", e);

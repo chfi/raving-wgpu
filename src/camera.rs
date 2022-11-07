@@ -136,7 +136,7 @@ impl DynamicCamera2d {
             n = Vec2::zero();
         }
 
-
+        /*
         if anchor.x > 0.0 {
             if anchor.y > 0.0 {
                 //
@@ -168,8 +168,23 @@ impl DynamicCamera2d {
                 // dbg!(&n);
             // }
         }
+        */
+        
+        let r_xy = self.size.x / self.size.y;
+        let r_yx = self.size.y / self.size.x;
+
+        let mut d = d;
+
+        // if d.x.abs() < d.y.abs() {
+            // d.y = r_yx * d.x;
+            // d.y = r_xy * d.x;
+        // } else {
+            // d.x = r_xy * d.y;
+            // d.x = r_yx * d.y;
+        // }
 
         let size = self.size;
+        self.size -= d * size;
     }
 
     // all positions and deltas should be given in world units,
