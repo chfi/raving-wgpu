@@ -4,7 +4,8 @@ use raving_wgpu::gui::EguiCtx;
 use std::collections::HashMap;
 use wgpu::util::DeviceExt;
 use winit::event::{ElementState, Event, VirtualKeyCode, WindowEvent};
-use winit::event_loop::{ControlFlow, EventLoopWindowTarget};
+use winit::event_loop::{ControlFlow, EventLoop, EventLoopWindowTarget};
+use winit::window::Window;
 
 use raving_wgpu::graph::dfrog::{Graph, InputResource};
 use raving_wgpu::{NodeId, State};
@@ -232,31 +233,7 @@ impl CubeExample {
                 let mut pos = touch.pos * size * 0.5;
             }
             (Some(mut fst), Some(mut snd)) => {
-                // fst.pos *= size;
-                // fst.delta *= size;
-                // snd.pos *= size;
-                // snd.delta *= size;
-                // pinch to zoom
-
-                let f2 = fst.pos + fst.delta * dt;
-                let s2 = snd.pos + snd.delta * dt;
-
-                let min1 = fst.pos.min_by_component(snd.pos);
-                let max1 = fst.pos.max_by_component(snd.pos);
-
-                let min2 = f2.min_by_component(s2);
-                let max2 = f2.max_by_component(s2);
-
-                let rect_orig = max1 - min1;
-                let rect_new = max2 - min2;
-
-                let mut d = rect_new - rect_orig;
-
-                let mid = rect_orig + d * 0.5;
-
-                let win_size = size;
                 let cam_size = self.camera.size;
-// 
 
                 let n_ = (snd.pos - fst.pos).normalized();
 
@@ -264,19 +241,15 @@ impl CubeExample {
 
                 let d = v;
 
-                // let d = snd.delta.x.max(snd.delta.y) * v;
                 dbg!(&d);
 
-                // d.x = ratio * d.y;
-                // dbg!(&(d, cam_size));
+                // self.camera.size -= d * cam_size;
 
-                self.camera.size -= d * cam_size;
-                // self.camera.size -= d * win_size;
-                // self.camera.size -= d * self.camera.size * win_size;
-
-                let t = mid;
-                // dbg!(&t);
-                // self.camera.blink(-t);
+                self.camera.pinch_anchored(
+                    fst.pos,
+                    snd.pos,
+                    snd.pos + snd.delta,
+                );
             }
             _ => (), // nothing
         }
@@ -491,6 +464,7 @@ impl CubeExample {
     }
 }
 
+
 async fn run() -> anyhow::Result<()> {
     let (event_loop, window, mut state) = raving_wgpu::initialize().await?;
 
@@ -588,10 +562,35 @@ async fn run() -> anyhow::Result<()> {
     })
 }
 
+#[cfg_attr(
+    target_os = "android",
+    ndk_glue::main(
+        backtrace = "on",
+        logger(level = "debug", tag = "hello-world")
+    )
+)]
 pub fn main() {
-    env_logger::builder()
-        .filter_level(log::LevelFilter::Warn)
-        .init();
+    #[cfg(target_os = "android")]
+    {
+        use ndk::trace;
+        let _trace;
+        if trace::is_trace_enabled() {
+            _trace = trace::Section::new("ndk-rs example main").unwrap();
+        }
+        
+    
+    log::warn!("sleeping to handle android...");
+    std::thread::sleep(std::time::Duration::from_millis(1000));
+    log::warn!("awake!");
+    }
+
+    #[cfg(not(target_os = "android"))]
+    {
+        env_logger::builder()
+            .filter_level(log::LevelFilter::Warn)
+            .init();
+    }
+
 
     if let Err(e) = pollster::block_on(run()) {
         log::error!("{:?}", e);

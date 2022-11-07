@@ -24,7 +24,11 @@ impl TouchHandler {
 
             let delta = end - pos;
 
-            TouchOutput { origin: touch.origin, pos, delta }
+            TouchOutput {
+                origin: touch.origin,
+                pos,
+                delta,
+            }
         })
     }
 
@@ -122,20 +126,50 @@ impl DynamicCamera2d {
     // centered on the view
     // i.e. calling this with `anchor = Vec2::zero()` results in
     // zooming centered on the view
-    pub fn pinch_anchored(
-        &mut self,
-        anchor: Vec2,
-        start: Vec2,
-        end: Vec2,
-    ) {
+    pub fn pinch_anchored(&mut self, anchor: Vec2, start: Vec2, end: Vec2) {
         let d0 = start - anchor;
         let n0 = d0.normalized();
 
         let d = end - start;
-        let n = d.normalized();
+        let mut n = d.normalized();
+        if d.mag() == 0.0 {
+            n = Vec2::zero();
+        }
+
+
+        if anchor.x > 0.0 {
+            if anchor.y > 0.0 {
+                //
+            } else {
+                //
+            }
+        } else {
+            if anchor.y > 0.0 {
+                //
+            } else {
+                //
+            }
+        }
+
+        let r_xy = self.size.x / self.size.y;
+        let r_yx = self.size.y / self.size.x;
+
+        if n.y > 0.0 {
+            // if n.x > 0.0 {
+            // self.size.x += 
+                // dbg!(&n);
+            // } else {
+                // dbg!(&n);
+            // }
+        } else {
+            // if n.x > 0.0 {
+                // dbg!(&n);
+            // } else {
+                // dbg!(&n);
+            // }
+        }
 
         let size = self.size;
-        
     }
 
     // all positions and deltas should be given in world units,
@@ -149,8 +183,6 @@ impl DynamicCamera2d {
     ) {
         let aspect = self.size.x / self.size.y;
         // map position axes to view sides
-
-
 
         // apply deltas to view sides
     }
