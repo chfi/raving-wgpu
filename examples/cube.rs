@@ -140,21 +140,25 @@ impl CubeExample {
             let touch_scr = touches.iter().map(|t| {
                 let mut p = t.pos;
                 p.y = 1.0 - p.y;
-                p
+                (p, t.origin)
             });
 
             let mut prev_pt = None;
 
-            for tch in touch_scr {
+            for (tch, orig) in touch_scr {
                 let p = tch * size;
                 let p = egui::pos2(p.x, p.y);
-                let stroke =egui::Stroke::new(1.0, egui::Color32::WHITE);
+                let stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
                 // dbg!(&(p.x, p.y));
-                painter.circle_stroke(
-                    p,
-                    5.0,
-                    stroke,
-                );
+                painter.circle_stroke(p, 5.0, stroke);
+
+                {
+                    let o = orig * size;
+                    let o = egui::pos2(o.x, o.y);
+                    let mut stroke = stroke;
+                    stroke.color = egui::Color32::RED;
+                    painter.line_segment([o, p], stroke);
+                }
 
                 if let Some(prev) = prev_pt {
                     painter.line_segment([prev, p], stroke);
@@ -172,7 +176,7 @@ impl CubeExample {
                 p_.y = 1.0 - p_.y;
 
                 let text = format!("{p_:?}");
-                println!("{text}");
+                // println!("{text}");
                 painter.text(
                     egui::pos2(400.0, 50.0),
                     egui::Align2::CENTER_CENTER,
@@ -228,10 +232,10 @@ impl CubeExample {
                 let mut pos = touch.pos * size * 0.5;
             }
             (Some(mut fst), Some(mut snd)) => {
-                fst.pos *= size;
-                fst.delta *= size;
-                snd.pos *= size;
-                snd.delta *= size;
+                // fst.pos *= size;
+                // fst.delta *= size;
+                // snd.pos *= size;
+                // snd.delta *= size;
                 // pinch to zoom
 
                 let f2 = fst.pos + fst.delta * dt;
@@ -246,11 +250,33 @@ impl CubeExample {
                 let rect_orig = max1 - min1;
                 let rect_new = max2 - min2;
 
-                let d = rect_new - rect_orig;
+                let mut d = rect_new - rect_orig;
 
                 let mid = rect_orig + d * 0.5;
 
-                self.camera.size -= d;
+                let win_size = size;
+                let cam_size = self.camera.size;
+// 
+
+                let n_ = (snd.pos - fst.pos).normalized();
+
+                let v = n_.dot(snd.delta);
+
+                let d = v;
+
+                // let d = snd.delta.x.max(snd.delta.y) * v;
+                dbg!(&d);
+
+                // d.x = ratio * d.y;
+                // dbg!(&(d, cam_size));
+
+                self.camera.size -= d * cam_size;
+                // self.camera.size -= d * win_size;
+                // self.camera.size -= d * self.camera.size * win_size;
+
+                let t = mid;
+                // dbg!(&t);
+                // self.camera.blink(-t);
             }
             _ => (), // nothing
         }

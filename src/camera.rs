@@ -5,6 +5,7 @@ use winit::event::WindowEvent;
 
 pub struct TouchState {
     id: u64,
+    origin: Vec2,
     start: Vec2,
     end: Vec2,
 }
@@ -23,7 +24,7 @@ impl TouchHandler {
 
             let delta = end - pos;
 
-            TouchOutput { pos, delta }
+            TouchOutput { origin: touch.origin, pos, delta }
         })
     }
 
@@ -51,6 +52,7 @@ impl TouchHandler {
                 Phase::Started => {
                     self.touches.push_back(TouchState {
                         id,
+                        origin: pos,
                         start: pos,
                         end: pos,
                     });
@@ -78,6 +80,7 @@ impl TouchHandler {
 
 #[derive(Debug, Clone, Copy)]
 pub struct TouchOutput {
+    pub origin: Vec2,
     pub pos: Vec2,
     pub delta: Vec2,
 }
@@ -113,6 +116,26 @@ impl DynamicCamera2d {
 
     pub fn displacement(&self) -> Vec2 {
         self.center - self.prev_center
+    }
+
+    // all positions and deltas should be given in world units,
+    // centered on the view
+    // i.e. calling this with `anchor = Vec2::zero()` results in
+    // zooming centered on the view
+    pub fn pinch_anchored(
+        &mut self,
+        anchor: Vec2,
+        start: Vec2,
+        end: Vec2,
+    ) {
+        let d0 = start - anchor;
+        let n0 = d0.normalized();
+
+        let d = end - start;
+        let n = d.normalized();
+
+        let size = self.size;
+        
     }
 
     // all positions and deltas should be given in world units,
