@@ -12,8 +12,6 @@ pub fn dist_to_rect_sides(
 ) -> f32x4 {
     let o = rect_center;
     let s = rect_size;
-    // let p = o + p;
-    // let p = p + (o - s * 0.5);
 
     let w2 = s.x / 2.0;
     let h2 = s.y / 2.0;
@@ -25,25 +23,20 @@ pub fn dist_to_rect_sides(
 
     let sides = ds;
 
-    let px = p.x;
-    let py = p.y;
-    let sarray = sides.to_array();
-    // println!("{px:.2}, {py:.2} - {sarray:.4?}");
+    let result = sides - p_;
 
-    // let top = o.y - h2;
-
-    // let result = sides - p_;
-
-    // result.flip_signs()
-    // result * f32x4::flip_signs(self, signs)
-
-    // let darray = p_.to_array();
-
-    // println!("{px:.2}, {py:.2} - {darray:.4?}");
-
-    sides - p_
-    // p_ - sides
+    // flip top and left so that positive values are inside
+    result.flip_signs([-1f32, 1.0, 1.0, -1.0].into())
 }
+
+// pub fn side_dists_to_2d(dists_urdl: f32x4) -> (Vec2, Vec2) {
+//     let [u, r, d, l] = dists_urdl.to_array();
+//     let w = r + l;
+//     let h = u + d;
+//     let pos = Vec2::new(r, u);
+//     let size = Vec2::new(w, h);
+//     (pos, size)
+// }
 
 pub struct TouchState {
     id: u64,
@@ -167,17 +160,18 @@ impl DynamicCamera2d {
     pub fn pinch_anchored(&mut self, anchor: Vec2, start: Vec2, end: Vec2) {
         let d0 = start - anchor;
         let d = end - start;
-        /*
-        let n0 = d0.normalized();
-
-        let mut n = d.normalized();
-        if d.mag() == 0.0 {
-            n = Vec2::zero();
-        }
-        */
 
         // let s_dists = dist_to_rect_sides(self.center, self.size, start);
         // dbg!(s_dists.to_array());
+        let s_dists = dist_to_rect_sides(
+            self.center, //
+            self.size,   //
+            start,
+        );
+
+        let darray = s_dists.to_array();
+        println!("{darray:.4?}");
+        let [s_u, s_r, s_d, s_l] = s_dists.to_array();
 
         let p = start;
 
@@ -186,20 +180,46 @@ impl DynamicCamera2d {
 
         // horizontal component
         let dw = d.x.abs();
-        let t = (p.y - self.size.y) / self.size.y;
+        // let t = (p.y - self.size.y) / self.size.y;
         // let dh = d.
+
+        let split_h = s_u / (s_u + s_d);
+        let split_v = s_l / (s_l + s_r);
+
+        let r_xy = self.size.x / self.size.y;
+        let r_yx = self.size.y / self.size.x;
+
+        // let prop_up = t;
+        // let prop_down = 1.0 - t;
+
+        let old_size = self.size;
+
+
+        // dbg!(&(prop_up, prop_down));
+        dbg!(&split_h);
 
         if d.x > 0.0 {
             // extrude to the right, then equalize
             self.size.x += dw;
+
+            let new_h = self.size.x * r_yx;
+            let diff = new_h - old_size.y;
+            self.size.y = new_h;
+
+            self.center.y -= diff * split_h;
+
         } else {
             // extrude to the left, then equalize
             self.size.x += dw;
             self.center.x -= dw;
+            
+            let new_h = self.size.x * r_yx;
+            let diff = new_h - old_size.y;
+            self.size.y = new_h;
+
+            self.center.y -= diff * split_h;
         }
 
-        let size = self.size;
-        self.size -= d * size;
     }
 
     // all positions and deltas should be given in world units,

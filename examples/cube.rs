@@ -186,7 +186,7 @@ impl CubeExample {
                     egui::pos2(400.0, 50.0),
                     egui::Align2::CENTER_CENTER,
                     &text,
-                    egui::FontId::monospace(12.0),
+                    egui::FontId::monospace(16.0),
                     egui::Color32::WHITE,
                 );
 
@@ -247,11 +247,11 @@ impl CubeExample {
                 let darray = s_dists.to_array();
                 let px = pos.x;
                 let py = pos.y;
-                println!("{px:.2}, {py:.2} - {darray:.4?}");
+                // println!("{px:.2}, {py:.2} - {darray:.4?}");
                 // dbg!(s_dists.to_array());
 
                 // let pos = (touch.pos - Vec2::new(0.5, 0.5)) * size;
-                let mut pos = touch.pos * size * 0.5;
+                // let mut pos = touch.pos * size * 0.5;
             }
             (Some(mut fst), Some(mut snd)) => {
                 let cam_size = self.camera.size;
@@ -262,14 +262,24 @@ impl CubeExample {
 
                 let d = v;
 
-                dbg!(&d);
+                // dbg!(&d);
 
                 // self.camera.size -= d * cam_size;
+                
+                let mut fst_pos = fst.pos - Vec2::new(0.5, 0.5);
+                fst_pos.y *= -1.0;
+                fst_pos *= self.camera.size;
+                fst_pos += self.camera.center;
+                
+                let mut snd_pos = snd.pos - Vec2::new(0.5, 0.5);
+                snd_pos.y *= -1.0;
+                snd_pos *= self.camera.size;
+                snd_pos += self.camera.center;
 
                 self.camera.pinch_anchored(
-                    fst.pos,
-                    snd.pos,
-                    snd.pos + snd.delta,
+                    fst_pos,
+                    snd_pos,
+                    snd_pos + snd.delta,
                 );
             }
             _ => (), // nothing
