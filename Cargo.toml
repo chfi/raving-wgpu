@@ -63,6 +63,10 @@ name = "cube"
 path = "examples/cube.rs"
 # crate-type = ["cdylib"]
 
+[[example]]
+name = "graph"
+path = "examples/graph.rs"
+
 
 [[example]]
 name = "triangle"
