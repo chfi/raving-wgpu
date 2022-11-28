@@ -161,6 +161,16 @@ impl DynamicCamera2d {
         let d0 = start - anchor;
         let d = end - start;
 
+        if d0.mag() == 0.0 {
+            return;
+        }
+
+        let n0 = d0.normalized();
+
+        let d = d * d.dot(n0);
+        dbg!(n0.dot(d));
+        // let d = d.dot(n0);
+
         // let s_dists = dist_to_rect_sides(self.center, self.size, start);
         // dbg!(s_dists.to_array());
         let s_dists = dist_to_rect_sides(
@@ -173,13 +183,16 @@ impl DynamicCamera2d {
         println!("{darray:.4?}");
         let [s_u, s_r, s_d, s_l] = s_dists.to_array();
 
+
         let p = start;
 
         let dw = d.x.abs();
         let dh = d.y.abs();
 
-        let split_h = s_u / (s_u + s_d);
-        let split_v = s_l / (s_l + s_r);
+        let split_hu = s_u / (s_u + s_d);
+        let split_hd = s_d / (s_u + s_d);
+        let split_vl = s_l / (s_l + s_r);
+        let split_vr = s_r / (s_l + s_r);
 
         let r_xy = self.size.x / self.size.y;
         let r_yx = self.size.y / self.size.x;
@@ -199,7 +212,7 @@ impl DynamicCamera2d {
         let diff = new_h - old_size.y;
         self.size.y = new_h;
 
-        self.center.y -= diff * split_h;
+        self.center.y -= diff * split_hu;
 
         let old_size = self.size;
 
@@ -214,7 +227,7 @@ impl DynamicCamera2d {
         let diff = new_w - old_size.x;
         self.size.x = new_w;
 
-        self.center.x -= diff * split_v;
+        self.center.x -= diff * split_vl;
 
     }
 
