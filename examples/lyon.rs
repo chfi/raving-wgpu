@@ -49,11 +49,11 @@ struct LyonRenderer {
 struct LyonBuffers {
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
-    num_instances: u32,
+    // num_instances: u32,
 }
 
 impl LyonBuffers {
-    fn example(state: &mut State) -> Result<Self> {
+    fn example(state: &State) -> Result<Self> {
         let mut geometry: VertexBuffers<GpuVertex, u32> = VertexBuffers::new();
 
         let tolerance = 0.02;
@@ -80,21 +80,35 @@ impl LyonBuffers {
 
         fill_tess.tessellate_path(&path, &opts, &mut buf_build)?;
 
-        println!(
+        eprintln!(
             " -- {} vertices {} indices",
             geometry.vertices.len(),
             geometry.indices.len()
         );
 
-        std::process::exit(1);
+        let vertex_buffer = state.device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("Vertex Buffer"),
+                contents: bytemuck::cast_slice(&geometry.vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            },
+        );
 
-        // Ok(Self {
-        //     vertex_buffer: todo!(),
-        //     index_buffer: todo!(),
-        //     num_instances: todo!(),
-        // })
+        let index_buffer = state.device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("Index Buffer"),
+                contents: bytemuck::cast_slice(&geometry.indices),
+                usage: wgpu::BufferUsages::INDEX,
+            },
+        );
 
-        todo!();
+        // let num_instances = geometry.v
+
+        Ok(Self {
+            vertex_buffer,
+            index_buffer,
+            //     num_instances: todo!(),
+        })
     }
 }
 
@@ -156,6 +170,15 @@ impl LyonRenderer {
         );
 
         let draw_node = graph.add_node(draw_schema);
+        
+        graph.add_link_from_transient("vertices", draw_node, 0);
+        graph.add_link_from_transient("indices", draw_node, 1);
+        graph.add_link_from_transient("swapchain", draw_node, 2);
+
+        // set 0, binding 0, transform matrix
+        graph.add_link_from_transient("transform", draw_node, 3);
+
+        let path_buffers = LyonBuffers::example(state)?;
 
         Ok(Self {
             render_graph: graph,
@@ -164,14 +187,214 @@ impl LyonRenderer {
             touch,
             graph_scalars: rhai::Map::default(),
             uniform_buf,
-            path_buffers: None,
+            path_buffers: Some(path_buffers),
             draw_node,
         })
+    }
+
+    fn render(&mut self, state: &mut State) -> Result<()> {
+        let dims = state.size;
+        let size = [dims.width, dims.height];
+
+        let mut transient_res: HashMap<String, InputResource<'_>> =
+            HashMap::default();
+
+        let Some(buffers) = self.path_buffers.as_ref() else {
+            return Ok(());
+        };
+
+        if let Ok(output) = state.surface.get_current_texture() {
+            {
+                let uniform_data = self.camera.to_matrix();
+                state.queue.write_buffer(
+                    &self.uniform_buf,
+                    0,
+                    bytemuck::cast_slice(&[uniform_data]),
+                );
+            }
+
+            let output_view = output
+                .texture
+                .create_view(&wgpu::TextureViewDescriptor::default());
+
+            let format = state.surface_format;
+
+            transient_res.insert(
+                "swapchain".into(),
+                InputResource::Texture {
+                    size,
+                    format,
+                    texture: None,
+                    view: Some(&output_view),
+                    sampler: None,
+                },
+            );
+
+            let stride = 6 * 4;
+            let v_size = 24 * stride;
+
+            transient_res.insert(
+                "vertices".into(),
+                InputResource::Buffer {
+                    size: v_size,
+                    stride: Some(stride),
+                    buffer: &buffers.vertex_buffer,
+                },
+            );
+
+            transient_res.insert(
+                "indices".into(),
+                InputResource::Buffer {
+                    size: 36,
+                    stride: Some(4),
+                    buffer: &buffers.index_buffer,
+                },
+            );
+
+            transient_res.insert(
+                "transform".into(),
+                InputResource::Buffer {
+                    size: 16 * 4,
+                    stride: None,
+                    buffer: &self.uniform_buf,
+                },
+            );
+
+            // add cube texture later
+
+            self.render_graph.update_transient_cache(&transient_res);
+
+            // log::warn!("validating graph");
+            let valid = self
+                .render_graph
+                .validate(&transient_res, &self.graph_scalars)
+                .unwrap();
+
+            if !valid {
+                log::error!("graph validation error");
+            }
+
+            let _sub_index = self
+                .render_graph
+                .execute(&state, &transient_res, &self.graph_scalars)
+                .unwrap();
+
+            let mut encoder = state.device.create_command_encoder(
+                &wgpu::CommandEncoderDescriptor {
+                    label: Some("egui render"),
+                },
+            );
+
+            // self.egui.render(state, &output_view, &mut encoder);
+
+            state.queue.submit(Some(encoder.finish()));
+
+            // probably shouldn't be polling here, but the render graph
+            // should probably not be submitting by itself, either:
+            //  better to return the encoders that will be submitted
+            state.device.poll(wgpu::MaintainBase::Wait);
+
+            output.present();
+        } else {
+            state.resize(state.size);
+        }
+
+        Ok(())
     }
 }
 
 async fn run() -> anyhow::Result<()> {
-    Ok(())
+    let (event_loop, window, mut state) = raving_wgpu::initialize().await?;
+
+    // let size = window.inner_size();
+    // let dims = [size.width, size.height];
+
+    dbg!();
+    let mut lyon = LyonRenderer::init(&event_loop, &state)?;
+    dbg!();
+    // let buffers = LyonBuffers::example(&mut state)?;
+    dbg!();
+
+    let mut first_resize = true;
+    let mut prev_frame_t = std::time::Instant::now();
+
+    event_loop.run(move |event, _, control_flow| {
+        match &event {
+            Event::WindowEvent { window_id, event } => {
+                let mut consumed = false;
+
+                if !consumed {
+                    match &event {
+                        WindowEvent::KeyboardInput { input, .. } => {
+                            use VirtualKeyCode as Key;
+                            if let Some(code) = input.virtual_keycode {
+                                if let Key::Escape = code {
+                                    *control_flow = ControlFlow::Exit;
+                                }
+                            }
+                        }
+                        WindowEvent::CloseRequested => {
+                            *control_flow = ControlFlow::Exit
+                        }
+                        WindowEvent::Resized(phys_size) => {
+                            // for some reason i get a validation error if i actually attempt
+                            // to execute the first resize
+                            if first_resize {
+                                first_resize = false;
+                            } else {
+                                let old = state.size;
+                                let new = *phys_size;
+
+                                state.resize(*phys_size);
+
+                                // let old = Vec2::new(
+                                //     old.width as f32,
+                                //     old.height as f32,
+                                // );
+                                // let new = Vec2::new(
+                                //     new.width as f32,
+                                //     new.height as f32,
+                                // );
+
+                                // let div = new / old;
+                            }
+                        }
+                        WindowEvent::ScaleFactorChanged {
+                            new_inner_size,
+                            ..
+                        } => {
+                            state.resize(**new_inner_size);
+                        }
+                        _ => {}
+                    }
+                }
+                // TODO
+            }
+
+            Event::RedrawRequested(window_id) if *window_id == window.id() => {
+                let w_size = window.inner_size();
+                let size = [w_size.width, w_size.height];
+
+                lyon.render(&mut state).unwrap();
+
+                // polyline.render(&mut state, size).unwrap();
+                // gol.render(&mut state, size).unwrap();
+            }
+            Event::MainEventsCleared => {
+                // RedrawRequested will only trigger once, unless we manually
+                // request it.
+
+                let dt = prev_frame_t.elapsed().as_secs_f32();
+                prev_frame_t = std::time::Instant::now();
+
+                // cube.update(&window, dt);
+
+                window.request_redraw();
+            }
+
+            _ => {}
+        }
+    })
 }
 
 pub fn main() {
