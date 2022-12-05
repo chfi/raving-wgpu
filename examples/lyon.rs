@@ -138,8 +138,9 @@ impl LyonRenderer {
 
             let primitive = wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
+                front_face: wgpu::FrontFace::Cw,
+                cull_mode: None,
+                // cull_mode: Some(wgpu::Face::Front),
                 polygon_mode: wgpu::PolygonMode::Fill,
 
                 strip_index_format: None,

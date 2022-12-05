@@ -7,7 +7,6 @@ layout (set = 0, binding = 0) uniform Transform {
 } transform;
 
 void main() {
-    // v_uv = a_uv;
     vec4 pos = vec4(a_pos, 0.0, 1.0);
     gl_Position = transform.m * pos;
 }
