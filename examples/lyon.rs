@@ -2,7 +2,8 @@ use egui_winit::EventResponse;
 
 use lyon::lyon_tessellation::geometry_builder::SimpleBuffersBuilder;
 use lyon::lyon_tessellation::{
-    BuffersBuilder, FillOptions, FillTessellator, FillVertex, VertexBuffers, StrokeTessellator, StrokeOptions, StrokeVertex,
+    BuffersBuilder, FillOptions, FillTessellator, FillVertex, StrokeOptions,
+    StrokeTessellator, StrokeVertex, VertexBuffers,
 };
 use lyon::math::point;
 use lyon::path::FillRule;
@@ -54,47 +55,103 @@ struct LyonBuffers {
     // num_instances: u32,
 }
 
+fn load_layout_tsv(tsv_path: impl AsRef<std::path::Path>) -> Result<Vec<Vec2>> {
+    use std::fs::File;
+    use std::io::{prelude::*, BufReader};
+    let mut lines = File::open(tsv_path).map(BufReader::new)?.lines();
+
+    let _header = lines.next();
+    let mut output = Vec::new();
+
+    fn parse_row(line: &str) -> Option<Vec2> {
+        let mut fields = line.split('\t');
+        let _idx = fields.next();
+        let x = fields.next()?.parse::<f32>().ok()?;
+        let y = fields.next()?.parse::<f32>().ok()?;
+        Some(Vec2::new(x, y))
+    }
+
+    for line in lines {
+        let line = line?;
+        if let Some(v) = parse_row(&line) {
+            output.push(v);
+        }
+    }
+
+    Ok(output)
+}
+
+fn parse_gfa_path(
+    gfa_path: impl AsRef<std::path::Path>,
+    path_name: &str,
+) -> Result<Vec<(u32, bool)>> {
+    use std::fs::File;
+    use std::io::{prelude::*, BufReader};
+    let lines = File::open(gfa_path).map(BufReader::new)?.lines();
+
+    let mut output = Vec::new();
+
+    for line in lines {
+        let line = line?;
+        if !line.starts_with("P") {
+            continue;
+        }
+
+        let mut fields = line.trim().split('\t');
+        let _ = fields.next();
+        let name = fields.next();
+
+        if Some(path_name) != name {
+            continue;
+        }
+
+        let steps = fields.next().unwrap().split(',');
+
+        for step in steps {
+            let (seg, orient) = step.split_at(step.len() - 1);
+            let seg_id = seg.parse::<u32>()?;
+            let rev = orient == "-";
+            output.push((seg_id, rev));
+        }
+    }
+
+    Ok(output)
+}
+
 impl LyonBuffers {
-
-    // fn from_path(state: &State, points: impl IntoIterator<Item = Vec2>) -> Self {
-
-    fn example2(state: &State) -> Result<Self> {
+    fn stroke_from_path(
+        state: &State,
+        points: impl IntoIterator<Item = Vec2>,
+    ) -> Result<Self> {
         let mut geometry: VertexBuffers<GpuVertex, u32> = VertexBuffers::new();
 
-        let tolerance = 0.02;
+        let tolerance = 10.0;
 
-        // let mut fill_tess = FillTessellator::new();
         let mut stroke_tess = StrokeTessellator::new();
-        
+
         let mut builder = lyon::path::Path::builder();
 
-        let p0 = point(0.0, -2.0);
-        let p1 = point(2.0, 0.0);
-        let p2 = point(0.0, 2.0);
-        let p3 = point(-2.0, 0.0);
+        let mut points = points.into_iter();
 
-        let tr = point(2.0, -2.0);
-        let br = point(2.0, 2.0);
-        let bl = point(-2.0, 2.0);
-        let tl = point(-2.0, -2.0);
+        let first = points.next().unwrap();
 
-        builder.begin(p0);
-        builder.quadratic_bezier_to(tr, p1);
-        builder.quadratic_bezier_to(br, p2);
-        builder.quadratic_bezier_to(bl, p3);
-        builder.quadratic_bezier_to(tl, p0);
+        builder.begin(point(first.x, first.y));
+
+        for p in points {
+            builder.line_to(point(p.x, p.y));
+        }
+
         builder.end(true);
-        
         let path = builder.build();
-        let opts =
-            StrokeOptions::tolerance(tolerance).with_line_width(0.1);
-            // FillOptions::tolerance(tolerance).with_fill_rule(FillRule::NonZero);
+        let opts = StrokeOptions::tolerance(tolerance).with_line_width(100.0);
+
+        // FillOptions::tolerance(tolerance).with_fill_rule(FillRule::NonZero);
 
         // let mut buf_build =
         //     BuffersBuilder::new(&mut geometry, |vx: FillVertex| GpuVertex {
         //         pos: vx.position().to_array(),
         //     });
-        
+
         let mut buf_build =
             BuffersBuilder::new(&mut geometry, |vx: StrokeVertex| GpuVertex {
                 pos: vx.position().to_array(),
@@ -131,6 +188,18 @@ impl LyonBuffers {
             index_buffer,
             //     num_instances: todo!(),
         })
+    }
+
+    fn example2(state: &State) -> Result<Self> {
+        let p = |x, y| Vec2::new(x, y);
+        let path = [
+            p(0.0, 0.0),
+            p(0.5, 0.5),
+            p(0.5, 0.75),
+            p(0.75, 0.75),
+            p(0.75, 0.5),
+        ];
+        Self::stroke_from_path(state, path)
     }
 
     fn example(state: &State) -> Result<Self> {
@@ -201,6 +270,7 @@ impl LyonRenderer {
     fn init(
         event_loop: &EventLoopWindowTarget<()>,
         state: &State,
+        points: Vec<Vec2>,
     ) -> Result<Self> {
         let mut graph = Graph::new();
 
@@ -237,8 +307,32 @@ impl LyonRenderer {
             )?
         };
 
-        let camera =
-            DynamicCamera2d::new(Vec2::new(0.0, 0.0), Vec2::new(8.0, 6.0));
+        let camera = {
+            let mut min = Vec2::broadcast(f32::MAX);
+            let mut max = Vec2::broadcast(f32::MIN);
+
+            for &point in points.iter() {
+                min = min.min_by_component(point);
+                max = max.max_by_component(point);
+            }
+
+            let bbox = max - min;
+            let mid = min + bbox / 2.0;
+
+            let center = mid;
+            let size = bbox;
+
+            // println!("{bbox:?}");
+            // let bbox = [std::f32::MIN, std::f32::MIN, std::f32::MAX, std::f32::MAX];
+            // let mut bbox = f32x4::from(bbox);
+
+            // let bbox = points.iter().fold([], f)
+
+            // let center = Vec2::new(0.0, 0.0);
+            // let size = Vec2::new(8.0, 6.0);
+
+            DynamicCamera2d::new(center, size)
+        };
 
         let touch = TouchHandler::default();
 
@@ -256,7 +350,7 @@ impl LyonRenderer {
         );
 
         let draw_node = graph.add_node(draw_schema);
-        
+
         graph.add_link_from_transient("vertices", draw_node, 0);
         graph.add_link_from_transient("indices", draw_node, 1);
         graph.add_link_from_transient("swapchain", draw_node, 2);
@@ -264,7 +358,9 @@ impl LyonRenderer {
         // set 0, binding 0, transform matrix
         graph.add_link_from_transient("transform", draw_node, 3);
 
-        let path_buffers = LyonBuffers::example2(state)?;
+        // let path_buffers = LyonBuffers::example2(state)?;
+
+        let path_buffers = LyonBuffers::stroke_from_path(state, points)?;
 
         Ok(Self {
             render_graph: graph,
@@ -315,7 +411,6 @@ impl LyonRenderer {
                     sampler: None,
                 },
             );
-
 
             let stride = 8;
             let v_size = stride * buffers.vertices;
@@ -389,14 +484,14 @@ impl LyonRenderer {
     }
 }
 
-async fn run() -> anyhow::Result<()> {
+async fn run(points: Vec<Vec2>) -> anyhow::Result<()> {
     let (event_loop, window, mut state) = raving_wgpu::initialize().await?;
 
     // let size = window.inner_size();
     // let dims = [size.width, size.height];
 
     dbg!();
-    let mut lyon = LyonRenderer::init(&event_loop, &state)?;
+    let mut lyon = LyonRenderer::init(&event_loop, &state, points)?;
     dbg!();
     // let buffers = LyonBuffers::example(&mut state)?;
     dbg!();
@@ -483,12 +578,50 @@ async fn run() -> anyhow::Result<()> {
     })
 }
 
-pub fn main() {
+pub fn main() -> Result<()> {
     env_logger::builder()
         .filter_level(log::LevelFilter::Warn)
         .init();
 
-    if let Err(e) = pollster::block_on(run()) {
+    let args = std::env::args().collect::<Vec<_>>();
+
+    if args.len() < 4 {
+        println!("Usage: {} <gfa> <layout tsv> <path name>", &args[0]);
+        std::process::exit(0);
+    }
+
+    let gfa = &args[1];
+    let tsv = &args[2];
+    let path = &args[3];
+
+    // let gfa = "amy.29.gfa";
+    // let path = "HG02080#1#JAHEOW010000048.1_16689583_17097287_0";
+    // let tsv = "amy.29.tsv";
+
+    let vertices = load_layout_tsv(tsv)?;
+
+    let steps = parse_gfa_path(gfa, path).unwrap();
+
+    println!("parsed {} steps", steps.len());
+
+    let points = steps
+        .into_iter()
+        .flat_map(|(seg, _rev)| {
+            let ix = seg as usize - 1;
+            let a = ix * 2;
+            let b = a + 1;
+            [vertices[a], vertices[b]]
+        })
+        .collect::<Vec<_>>();
+
+    // for (i, (seg, rev)) in steps.into_iter().enumerate().take(30) {
+    //     let orient = if rev { "-" } else { "+" };
+    //     println!("{i:2}: {seg}{orient}");
+    // }
+
+    if let Err(e) = pollster::block_on(run(points)) {
         log::error!("{:?}", e);
     }
+
+    Ok(())
 }
