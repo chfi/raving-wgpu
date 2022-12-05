@@ -2,7 +2,7 @@ use egui_winit::EventResponse;
 
 use lyon::lyon_tessellation::geometry_builder::SimpleBuffersBuilder;
 use lyon::lyon_tessellation::{
-    BuffersBuilder, FillOptions, FillTessellator, FillVertex, VertexBuffers,
+    BuffersBuilder, FillOptions, FillTessellator, FillVertex, VertexBuffers, StrokeTessellator, StrokeOptions, StrokeVertex,
 };
 use lyon::math::point;
 use lyon::path::FillRule;
@@ -55,6 +55,84 @@ struct LyonBuffers {
 }
 
 impl LyonBuffers {
+
+    // fn from_path(state: &State, points: impl IntoIterator<Item = Vec2>) -> Self {
+
+    fn example2(state: &State) -> Result<Self> {
+        let mut geometry: VertexBuffers<GpuVertex, u32> = VertexBuffers::new();
+
+        let tolerance = 0.02;
+
+        // let mut fill_tess = FillTessellator::new();
+        let mut stroke_tess = StrokeTessellator::new();
+        
+        let mut builder = lyon::path::Path::builder();
+
+        let p0 = point(0.0, -2.0);
+        let p1 = point(2.0, 0.0);
+        let p2 = point(0.0, 2.0);
+        let p3 = point(-2.0, 0.0);
+
+        let tr = point(2.0, -2.0);
+        let br = point(2.0, 2.0);
+        let bl = point(-2.0, 2.0);
+        let tl = point(-2.0, -2.0);
+
+        builder.begin(p0);
+        builder.quadratic_bezier_to(tr, p1);
+        builder.quadratic_bezier_to(br, p2);
+        builder.quadratic_bezier_to(bl, p3);
+        builder.quadratic_bezier_to(tl, p0);
+        builder.end(true);
+        
+        let path = builder.build();
+        let opts =
+            StrokeOptions::tolerance(tolerance).with_line_width(0.1);
+            // FillOptions::tolerance(tolerance).with_fill_rule(FillRule::NonZero);
+
+        // let mut buf_build =
+        //     BuffersBuilder::new(&mut geometry, |vx: FillVertex| GpuVertex {
+        //         pos: vx.position().to_array(),
+        //     });
+        
+        let mut buf_build =
+            BuffersBuilder::new(&mut geometry, |vx: StrokeVertex| GpuVertex {
+                pos: vx.position().to_array(),
+            });
+
+        // fill_tess.tessellate_path(&path, &opts, &mut buf_build)?;
+        stroke_tess.tessellate_path(&path, &opts, &mut buf_build)?;
+
+        let vertices = geometry.vertices.len();
+        let indices = geometry.indices.len();
+
+        let vertex_buffer = state.device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("Vertex Buffer"),
+                contents: bytemuck::cast_slice(&geometry.vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            },
+        );
+
+        let index_buffer = state.device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("Index Buffer"),
+                contents: bytemuck::cast_slice(&geometry.indices),
+                usage: wgpu::BufferUsages::INDEX,
+            },
+        );
+
+        // let num_instances = geometry.v
+
+        Ok(Self {
+            vertices,
+            indices,
+            vertex_buffer,
+            index_buffer,
+            //     num_instances: todo!(),
+        })
+    }
+
     fn example(state: &State) -> Result<Self> {
         let mut geometry: VertexBuffers<GpuVertex, u32> = VertexBuffers::new();
 
@@ -160,7 +238,7 @@ impl LyonRenderer {
         };
 
         let camera =
-            DynamicCamera2d::new(Vec2::new(0.0, 0.0), Vec2::new(4.0, 3.0));
+            DynamicCamera2d::new(Vec2::new(0.0, 0.0), Vec2::new(8.0, 6.0));
 
         let touch = TouchHandler::default();
 
@@ -186,7 +264,7 @@ impl LyonRenderer {
         // set 0, binding 0, transform matrix
         graph.add_link_from_transient("transform", draw_node, 3);
 
-        let path_buffers = LyonBuffers::example(state)?;
+        let path_buffers = LyonBuffers::example2(state)?;
 
         Ok(Self {
             render_graph: graph,
