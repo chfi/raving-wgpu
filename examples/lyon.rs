@@ -47,6 +47,8 @@ struct LyonRenderer {
 }
 
 struct LyonBuffers {
+    vertices: usize,
+    indices: usize,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     // num_instances: u32,
@@ -86,6 +88,9 @@ impl LyonBuffers {
             geometry.indices.len()
         );
 
+        let vertices = geometry.vertices.len();
+        let indices = geometry.indices.len();
+
         let vertex_buffer = state.device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor {
                 label: Some("Vertex Buffer"),
@@ -105,6 +110,8 @@ impl LyonBuffers {
         // let num_instances = geometry.v
 
         Ok(Self {
+            vertices,
+            indices,
             vertex_buffer,
             index_buffer,
             //     num_instances: todo!(),
@@ -122,11 +129,11 @@ impl LyonRenderer {
         let draw_schema = {
             let vert_src = include_bytes!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/shaders/examples/cube.vert.spv"
+                "/shaders/examples/lyon.vert.spv"
             ));
             let frag_src = include_bytes!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/shaders/examples/cube.frag.spv"
+                "/shaders/examples/flat.frag.spv"
             ));
 
             let primitive = wgpu::PrimitiveState {
@@ -230,8 +237,10 @@ impl LyonRenderer {
                 },
             );
 
-            let stride = 6 * 4;
-            let v_size = 24 * stride;
+
+            let stride = 8;
+            let v_size = stride * buffers.vertices;
+            let i_size = 4 * buffers.indices;
 
             transient_res.insert(
                 "vertices".into(),
@@ -245,7 +254,7 @@ impl LyonRenderer {
             transient_res.insert(
                 "indices".into(),
                 InputResource::Buffer {
-                    size: 36,
+                    size: i_size,
                     stride: Some(4),
                     buffer: &buffers.index_buffer,
                 },
@@ -259,8 +268,6 @@ impl LyonRenderer {
                     buffer: &self.uniform_buf,
                 },
             );
-
-            // add cube texture later
 
             self.render_graph.update_transient_cache(&transient_res);
 
