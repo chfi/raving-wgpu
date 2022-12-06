@@ -143,6 +143,7 @@ impl LyonBuffers {
 
         builder.end(true);
         let path = builder.build();
+
         let opts = StrokeOptions::tolerance(tolerance).with_line_width(150.0);
 
         // FillOptions::tolerance(tolerance).with_fill_rule(FillRule::NonZero);
@@ -199,7 +200,25 @@ impl LyonRenderer {
             .map(TouchOutput::flip_y)
             .collect::<Vec<_>>();
 
+        self.egui.run(window, |ctx| {
+            let painter = ctx.debug_painter();
+
+            let origin = Vec2::new(40000.0, 180000.0);
+            let norm_p = self.camera.transform_world_to_screen(origin);
+
+            let size = window.inner_size();
+            let size = Vec2::new(size.width as f32, size.height as f32);
+            let p = norm_p * size;
+
+            let stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
+            let p = egui::pos2(p.x, p.y);
+            dbg!(&p);
+            painter.circle_stroke(p, 5.0, stroke);
+        });
+
         if !touches.is_empty() {
+            // let cam_size = self.camera.size;
+            // dbg!(&cam_size);
             self.camera.stop();
         }
 
@@ -309,6 +328,8 @@ impl LyonRenderer {
                 min = min.min_by_component(point);
                 max = max.max_by_component(point);
             }
+            let mid = min + (max - min) / 2.0;
+            // dbg!(&mid);
 
             let center = Vec2::zero();
             let size = Vec2::new(4.0, 3.0);
@@ -451,7 +472,7 @@ impl LyonRenderer {
                 },
             );
 
-            // self.egui.render(state, &output_view, &mut encoder);
+            self.egui.render(state, &output_view, &mut encoder);
 
             state.queue.submit(Some(encoder.finish()));
 
@@ -581,18 +602,19 @@ pub fn main() -> Result<()> {
 
     let points = steps
         .into_iter()
-        .flat_map(|(seg, _rev)| {
+        .flat_map(|(seg, rev)| {
             let ix = seg as usize - 1;
             let a = ix * 2;
             let b = a + 1;
-            [vertices[a], vertices[b]]
+            let va = vertices[a];
+            let vb = vertices[b];
+            if rev {
+                [vb, va]
+            } else {
+                [va, vb]
+            }
         })
         .collect::<Vec<_>>();
-
-    // for (i, (seg, rev)) in steps.into_iter().enumerate().take(30) {
-    //     let orient = if rev { "-" } else { "+" };
-    //     println!("{i:2}: {seg}{orient}");
-    // }
 
     if let Err(e) = pollster::block_on(run(points)) {
         log::error!("{:?}", e);

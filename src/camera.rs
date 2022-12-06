@@ -153,6 +153,22 @@ impl DynamicCamera2d {
         }
     }
 
+    /// returns a point in the unit square; flips Y
+    pub fn transform_world_to_screen(&self, p: Vec2) -> Vec2 {
+        let o = self.center;
+        let s = self.size / 2.0;
+
+        let tl = o - s;
+        let br = o + s;
+
+        let min = tl.min_by_component(br);
+        let max = tl.max_by_component(br);
+        
+        let x = (p.x - min.x) / (max.x - min.x).abs();
+        let y = (p.y - min.y) / (max.y - min.y).abs();
+        Vec2::new(x, 1.0 - y)
+    }
+
     /// Transform view to fit the rectangle defined by the two corners
     /// `p0` and `p1` (in world space), while keeping the current aspect
     /// ratio of the camera.
@@ -265,20 +281,6 @@ impl DynamicCamera2d {
 
     }
 
-    // all positions and deltas should be given in world units,
-    // centered on the view
-    pub fn pinch(
-        &mut self,
-        start_0: Vec2,
-        end_0: Vec2,
-        start_1: Vec2,
-        end_1: Vec2,
-    ) {
-        let aspect = self.size.x / self.size.y;
-        // map position axes to view sides
-
-        // apply deltas to view sides
-    }
 
     /// `fix` should be relative to center, in normalized screen coordinates
     pub fn scale_uniformly_around(&mut self, fix: Vec2, scale: f32) {
@@ -297,7 +299,14 @@ impl DynamicCamera2d {
         self.prev_center = self.center;
 
         let size = self.size * scale;
-        self.size += size;
+        if scale > 1.0 {
+            self.size += size;
+
+        } else {
+            self.size -= size;
+
+        }
+
     }
 
     pub fn resize_relative(&mut self, scale: Vec2) {
