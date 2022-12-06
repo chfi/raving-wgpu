@@ -153,6 +153,40 @@ impl DynamicCamera2d {
         }
     }
 
+    /// Transform view to fit the rectangle defined by the two corners
+    /// `p0` and `p1` (in world space), while keeping the current aspect
+    /// ratio of the camera.
+    pub fn fit_region_keep_aspect(&mut self, p0: Vec2, p1: Vec2) {
+        // let old_size = [self.size.x, self.size.y];
+
+        let tl = p0.min_by_component(p1);
+        let br = p0.max_by_component(p1);
+
+        let width = br.x - tl.x;
+        let height = br.y - tl.y;
+        // let reg_size = [width, height];
+
+        if width > height {
+            let aspect = self.size.y / self.size.x;
+            self.size.x = width;
+            self.size.y = width * aspect;
+        } else {
+            let aspect = self.size.x / self.size.y;
+            self.size.y = height;
+            self.size.x = height * aspect;
+        }
+
+        self.center = p0 + (p1 - p0) * 0.5;
+        self.prev_center = self.center;
+        
+        // let new_size = [self.size.x, self.size.y];
+
+        // println!("   old: {old_size:?}");
+        // println!("region: {reg_size:?}");
+        // println!("   new: {new_size:?}");
+    }
+
+
     pub fn displacement(&self) -> Vec2 {
         self.center - self.prev_center
     }

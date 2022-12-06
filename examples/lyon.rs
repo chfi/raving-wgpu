@@ -316,22 +316,14 @@ impl LyonRenderer {
                 max = max.max_by_component(point);
             }
 
-            let bbox = max - min;
-            let mid = min + bbox / 2.0;
+            let center = Vec2::zero();
+            let size = Vec2::new(4.0, 3.0);
 
-            let center = mid;
-            let size = bbox;
+            let mut camera =
+            DynamicCamera2d::new(center, size);
 
-            // println!("{bbox:?}");
-            // let bbox = [std::f32::MIN, std::f32::MIN, std::f32::MAX, std::f32::MAX];
-            // let mut bbox = f32x4::from(bbox);
-
-            // let bbox = points.iter().fold([], f)
-
-            // let center = Vec2::new(0.0, 0.0);
-            // let size = Vec2::new(8.0, 6.0);
-
-            DynamicCamera2d::new(center, size)
+            camera.fit_region_keep_aspect(min, max);
+            camera
         };
 
         let touch = TouchHandler::default();
