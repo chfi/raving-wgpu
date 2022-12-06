@@ -1544,7 +1544,7 @@ impl GraphOps {
                         buffer,
                     } = res
                     {
-                        let indices = 0u32..size as u32;
+                        let indices = 0u32..(size / stride.unwrap_or(4)) as u32;
                         (buffer, indices)
                     } else {
                         panic!("texture was used as index buffer!");
@@ -1660,7 +1660,7 @@ impl GraphOps {
                             let count = (size / stride) as u32;
                             0..count
                         };
-                        dbg!((&vertices, &instances));
+                        // dbg!((&vertices, &instances));
 
                         pass.draw(vertices, instances);
                     }

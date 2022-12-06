@@ -267,6 +267,40 @@ impl LyonBuffers {
 }
 
 impl LyonRenderer {
+    fn update(&mut self, window: &winit::window::Window, dt: f32) {
+        let touches = self
+            .touch
+            .take()
+            .map(TouchOutput::flip_y)
+            .collect::<Vec<_>>();
+
+        if !touches.is_empty() {
+            self.camera.stop();
+        }
+
+        self.camera.update(dt);
+
+        // zooming will come later
+        if let Some(mut touch) = touches.first().copied() {
+            touch.delta *= -1.0;
+            self.camera.blink(touch.delta);
+        }
+    }
+
+    fn on_event(
+        &mut self,
+        window_dims: [u32; 2],
+        event: &WindowEvent,
+    ) -> bool {
+        let mut consume = false;
+
+        if self.touch.on_event(window_dims, event) {
+            consume = true;
+        }
+
+        consume
+    }
+
     fn init(
         event_loop: &EventLoopWindowTarget<()>,
         state: &State,
@@ -319,8 +353,7 @@ impl LyonRenderer {
             let center = Vec2::zero();
             let size = Vec2::new(4.0, 3.0);
 
-            let mut camera =
-            DynamicCamera2d::new(center, size);
+            let mut camera = DynamicCamera2d::new(center, size);
 
             camera.fit_region_keep_aspect(min, max);
             camera
@@ -496,6 +529,10 @@ async fn run(points: Vec<Vec2>) -> anyhow::Result<()> {
             Event::WindowEvent { window_id, event } => {
                 let mut consumed = false;
 
+                let size = window.inner_size();
+                let dims = [size.width, size.height];
+                consumed = lyon.on_event(dims, event);
+
                 if !consumed {
                     match &event {
                         WindowEvent::KeyboardInput { input, .. } => {
@@ -560,7 +597,7 @@ async fn run(points: Vec<Vec2>) -> anyhow::Result<()> {
                 let dt = prev_frame_t.elapsed().as_secs_f32();
                 prev_frame_t = std::time::Instant::now();
 
-                // cube.update(&window, dt);
+                lyon.update(&window, dt);
 
                 window.request_redraw();
             }
