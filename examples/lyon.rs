@@ -143,7 +143,7 @@ impl LyonBuffers {
 
         builder.end(true);
         let path = builder.build();
-        let opts = StrokeOptions::tolerance(tolerance).with_line_width(100.0);
+        let opts = StrokeOptions::tolerance(tolerance).with_line_width(150.0);
 
         // FillOptions::tolerance(tolerance).with_fill_rule(FillRule::NonZero);
 
@@ -159,81 +159,6 @@ impl LyonBuffers {
 
         // fill_tess.tessellate_path(&path, &opts, &mut buf_build)?;
         stroke_tess.tessellate_path(&path, &opts, &mut buf_build)?;
-
-        let vertices = geometry.vertices.len();
-        let indices = geometry.indices.len();
-
-        let vertex_buffer = state.device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor {
-                label: Some("Vertex Buffer"),
-                contents: bytemuck::cast_slice(&geometry.vertices),
-                usage: wgpu::BufferUsages::VERTEX,
-            },
-        );
-
-        let index_buffer = state.device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor {
-                label: Some("Index Buffer"),
-                contents: bytemuck::cast_slice(&geometry.indices),
-                usage: wgpu::BufferUsages::INDEX,
-            },
-        );
-
-        // let num_instances = geometry.v
-
-        Ok(Self {
-            vertices,
-            indices,
-            vertex_buffer,
-            index_buffer,
-            //     num_instances: todo!(),
-        })
-    }
-
-    fn example2(state: &State) -> Result<Self> {
-        let p = |x, y| Vec2::new(x, y);
-        let path = [
-            p(0.0, 0.0),
-            p(0.5, 0.5),
-            p(0.5, 0.75),
-            p(0.75, 0.75),
-            p(0.75, 0.5),
-        ];
-        Self::stroke_from_path(state, path)
-    }
-
-    fn example(state: &State) -> Result<Self> {
-        let mut geometry: VertexBuffers<GpuVertex, u32> = VertexBuffers::new();
-
-        let tolerance = 0.02;
-
-        let mut fill_tess = FillTessellator::new();
-
-        let mut builder = lyon::path::Path::builder();
-
-        builder.begin(point(0.0, 0.0));
-        builder.line_to(point(0.5, 0.5));
-        builder.line_to(point(0.5, 0.75));
-        builder.line_to(point(0.75, 0.75));
-        builder.line_to(point(0.75, 0.5));
-        builder.end(true);
-
-        let path = builder.build();
-        let opts =
-            FillOptions::tolerance(tolerance).with_fill_rule(FillRule::NonZero);
-
-        let mut buf_build =
-            BuffersBuilder::new(&mut geometry, |vx: FillVertex| GpuVertex {
-                pos: vx.position().to_array(),
-            });
-
-        fill_tess.tessellate_path(&path, &opts, &mut buf_build)?;
-
-        eprintln!(
-            " -- {} vertices {} indices",
-            geometry.vertices.len(),
-            geometry.indices.len()
-        );
 
         let vertices = geometry.vertices.len();
         let indices = geometry.indices.len();
@@ -280,18 +205,53 @@ impl LyonRenderer {
 
         self.camera.update(dt);
 
-        // zooming will come later
-        if let Some(mut touch) = touches.first().copied() {
-            touch.delta *= -1.0;
-            self.camera.blink(touch.delta);
+        match touches.len() {
+            0 => {
+                // drift
+            }
+            1 => {
+                // pan
+                let mut touch = touches[0];
+                touch.delta *= -1.0;
+                self.camera.blink(touch.delta);
+            }
+            n => {
+                // pinch zoom (only use first two touches)
+                let fst = touches[0];
+                let snd = touches[1];
+
+                let p0 = fst.pos;
+                let p1 = snd.pos;
+
+                let p0_ = fst.pos + fst.delta;
+                let p1_ = snd.pos + snd.delta;
+
+                let dist_pre = (p1 - p0).mag();
+                let dist_post = (p1_ - p0_).mag();
+                let del = (dist_post - dist_pre).abs();
+
+                let cen = self.camera.center;
+                let tl = cen - self.camera.size / 2.0;
+                let br = cen + self.camera.size / 2.0;
+
+                let cam_hyp = self.camera.size.dot(self.camera.size).sqrt();
+                let del = del * cam_hyp;
+
+                // if side_pre > side_post {
+                if dist_pre > dist_post {
+                    let tl = tl - Vec2::new(del, del);
+                    let br = br + Vec2::new(del, del);
+                    self.camera.fit_region_keep_aspect(tl, br);
+                } else {
+                    let tl = tl + Vec2::new(del, del);
+                    let br = br - Vec2::new(del, del);
+                    self.camera.fit_region_keep_aspect(tl, br);
+                }
+            }
         }
     }
 
-    fn on_event(
-        &mut self,
-        window_dims: [u32; 2],
-        event: &WindowEvent,
-    ) -> bool {
+    fn on_event(&mut self, window_dims: [u32; 2], event: &WindowEvent) -> bool {
         let mut consume = false;
 
         if self.touch.on_event(window_dims, event) {
@@ -512,14 +472,7 @@ impl LyonRenderer {
 async fn run(points: Vec<Vec2>) -> anyhow::Result<()> {
     let (event_loop, window, mut state) = raving_wgpu::initialize().await?;
 
-    // let size = window.inner_size();
-    // let dims = [size.width, size.height];
-
-    dbg!();
     let mut lyon = LyonRenderer::init(&event_loop, &state, points)?;
-    dbg!();
-    // let buffers = LyonBuffers::example(&mut state)?;
-    dbg!();
 
     let mut first_resize = true;
     let mut prev_frame_t = std::time::Instant::now();
@@ -578,17 +531,10 @@ async fn run(points: Vec<Vec2>) -> anyhow::Result<()> {
                         _ => {}
                     }
                 }
-                // TODO
             }
 
             Event::RedrawRequested(window_id) if *window_id == window.id() => {
-                let w_size = window.inner_size();
-                let size = [w_size.width, w_size.height];
-
                 lyon.render(&mut state).unwrap();
-
-                // polyline.render(&mut state, size).unwrap();
-                // gol.render(&mut state, size).unwrap();
             }
             Event::MainEventsCleared => {
                 // RedrawRequested will only trigger once, unless we manually
