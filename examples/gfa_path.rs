@@ -30,7 +30,39 @@ struct GpuVertex {
     // tex_coord: [f32; 2],
 }
 
-struct LyonRenderer {
+struct GfaLayout {
+    positions: Vec<Vec2>,
+}
+
+impl GfaLayout {
+    fn from_layout_tsv(tsv_path: impl AsRef<std::path::Path>) -> Result<Self> {
+        use std::fs::File;
+        use std::io::{prelude::*, BufReader};
+        let mut lines = File::open(tsv_path).map(BufReader::new)?.lines();
+
+        let _header = lines.next();
+        let mut positions = Vec::new();
+
+        fn parse_row(line: &str) -> Option<Vec2> {
+            let mut fields = line.split('\t');
+            let _idx = fields.next();
+            let x = fields.next()?.parse::<f32>().ok()?;
+            let y = fields.next()?.parse::<f32>().ok()?;
+            Some(Vec2::new(x, y))
+        }
+
+        for line in lines {
+            let line = line?;
+            if let Some(v) = parse_row(&line) {
+                positions.push(v);
+            }
+        }
+
+        Ok(GfaLayout { positions })
+    }
+}
+
+struct PathRenderer {
     render_graph: Graph,
     egui: EguiCtx,
 
@@ -40,6 +72,7 @@ struct LyonRenderer {
     graph_scalars: rhai::Map,
 
     uniform_buf: wgpu::Buffer,
+
     path_buffers: Option<LyonBuffers>,
     // uniform_buf: wgpu::Buffer,
     // vertex_buf: wgpu::Buffer,
@@ -141,7 +174,7 @@ impl LyonBuffers {
             builder.line_to(point(p.x, p.y));
         }
 
-        builder.end(true);
+        builder.end(false);
         let path = builder.build();
 
         let opts = StrokeOptions::tolerance(tolerance).with_line_width(150.0);
@@ -192,7 +225,7 @@ impl LyonBuffers {
     }
 }
 
-impl LyonRenderer {
+impl PathRenderer {
     fn update(&mut self, window: &winit::window::Window, dt: f32) {
         let touches = self
             .touch
@@ -493,7 +526,7 @@ impl LyonRenderer {
 async fn run(points: Vec<Vec2>) -> anyhow::Result<()> {
     let (event_loop, window, mut state) = raving_wgpu::initialize().await?;
 
-    let mut lyon = LyonRenderer::init(&event_loop, &state, points)?;
+    let mut app = PathRenderer::init(&event_loop, &state, points)?;
 
     let mut first_resize = true;
     let mut prev_frame_t = std::time::Instant::now();
@@ -505,7 +538,7 @@ async fn run(points: Vec<Vec2>) -> anyhow::Result<()> {
 
                 let size = window.inner_size();
                 let dims = [size.width, size.height];
-                consumed = lyon.on_event(dims, event);
+                consumed = app.on_event(dims, event);
 
                 if !consumed {
                     match &event {
@@ -555,7 +588,7 @@ async fn run(points: Vec<Vec2>) -> anyhow::Result<()> {
             }
 
             Event::RedrawRequested(window_id) if *window_id == window.id() => {
-                lyon.render(&mut state).unwrap();
+                app.render(&mut state).unwrap();
             }
             Event::MainEventsCleared => {
                 // RedrawRequested will only trigger once, unless we manually
@@ -564,7 +597,7 @@ async fn run(points: Vec<Vec2>) -> anyhow::Result<()> {
                 let dt = prev_frame_t.elapsed().as_secs_f32();
                 prev_frame_t = std::time::Instant::now();
 
-                lyon.update(&window, dt);
+                app.update(&window, dt);
 
                 window.request_redraw();
             }

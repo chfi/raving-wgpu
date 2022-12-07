@@ -65,8 +65,8 @@ name = "cube"
 path = "examples/cube.rs"
 
 [[example]]
-name = "lyon"
-path = "examples/lyon.rs"
+name = "gfa_path"
+path = "examples/gfa_path.rs"
 
 [[example]]
 name = "graph"
