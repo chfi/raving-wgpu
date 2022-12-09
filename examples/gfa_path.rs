@@ -73,6 +73,8 @@ struct PathRenderer {
 
     uniform_buf: wgpu::Buffer,
 
+    annotations: Vec<(std::ops::Range<usize>, String)>,
+
     path_buffers: Option<LyonBuffers>,
     // uniform_buf: wgpu::Buffer,
     // vertex_buf: wgpu::Buffer,
@@ -245,8 +247,10 @@ impl PathRenderer {
 
             let stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
             let p = egui::pos2(p.x, p.y);
-            dbg!(&p);
+            // dbg!(&p);
             painter.circle_stroke(p, 5.0, stroke);
+
+            // for (range, )
         });
 
         if !touches.is_empty() {
@@ -347,6 +351,7 @@ impl PathRenderer {
                 vert_src,
                 frag_src,
                 primitive,
+                wgpu::VertexStepMode::Vertex,
                 ["vertex_in"],
                 Some("indices"),
                 &[state.surface_format],
@@ -408,6 +413,7 @@ impl PathRenderer {
             touch,
             graph_scalars: rhai::Map::default(),
             uniform_buf,
+            annotations: Vec::new(),
             path_buffers: Some(path_buffers),
             draw_node,
         })
@@ -527,6 +533,14 @@ async fn run(points: Vec<Vec2>) -> anyhow::Result<()> {
     let (event_loop, window, mut state) = raving_wgpu::initialize().await?;
 
     let mut app = PathRenderer::init(&event_loop, &state, points)?;
+
+    {
+        let mk_ann = |a: usize, b: usize, s: &str| {
+            (a..b, s.to_string())
+        };
+        let anns = [mk_ann(10_000, 15_000, "a region")];
+        app.annotations.extend(anns);
+    }
 
     let mut first_resize = true;
     let mut prev_frame_t = std::time::Instant::now();

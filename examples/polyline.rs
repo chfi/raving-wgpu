@@ -115,6 +115,7 @@ impl Polyline {
                 state,
                 vert_src,
                 frag_src,
+                wgpu::VertexStepMode::Vertex,
                 ["vertex_in"],
                 None,
                 &[state.surface_format],

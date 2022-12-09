@@ -637,6 +637,7 @@ impl Graph {
         state: &State,
         vert_src: &[u8],
         frag_src: &[u8],
+        vertex_step_mode: wgpu::VertexStepMode,
         vertex_slots: impl IntoIterator<Item = &'a str>,
         index_slot: Option<&str>,
         frag_out_formats: &[wgpu::TextureFormat],
@@ -647,6 +648,7 @@ impl Graph {
             vert_src,
             frag_src,
             None,
+            vertex_step_mode,
             vertex_slots,
             index_slot,
             frag_out_formats,
@@ -663,6 +665,7 @@ impl Graph {
         vert_src: &[u8],
         frag_src: &[u8],
         primitive: wgpu::PrimitiveState,
+        vertex_step_mode: wgpu::VertexStepMode,
         vertex_slots: impl IntoIterator<Item = &'a str>,
         index_slot: Option<&str>,
         frag_out_formats: &[wgpu::TextureFormat],
@@ -673,6 +676,7 @@ impl Graph {
             vert_src,
             frag_src,
             Some(primitive),
+            vertex_step_mode,
             vertex_slots,
             index_slot,
             frag_out_formats,
@@ -1773,6 +1777,7 @@ impl GraphOps {
         vert_src: &[u8],
         frag_src: &[u8],
         primitive: Option<wgpu::PrimitiveState>,
+        step_mode: wgpu::VertexStepMode,
         vertex_slots: impl IntoIterator<Item = &'a str>,
         index_slot: Option<&str>,
         frag_out_formats: &[wgpu::TextureFormat],
@@ -1786,8 +1791,7 @@ impl GraphOps {
 
         let vert_inst = VertexShaderInstance::from_shader_single_buffer(
             &vert,
-            wgpu::VertexStepMode::Vertex,
-            // wgpu::VertexStepMode::Instance,
+            step_mode,
         );
 
         let frag_inst =

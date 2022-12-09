@@ -56,6 +56,7 @@ impl GraphExample {
                 vert_src,
                 frag_src,
                 primitive,
+                wgpu::VertexStepMode::Vertex,
                 ["vertex_in"],
                 None,
                 // Some("indices"),

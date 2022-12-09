@@ -9,6 +9,8 @@ use std::sync::Arc;
 
 use crate::State;
 
+pub use egui;
+
 pub type DebugWidget = Arc<
     dyn Fn(&mut egui::Ui) -> egui::InnerResponse<()> + Send + Sync + 'static,
 >;

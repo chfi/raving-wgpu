@@ -360,6 +360,7 @@ pub async fn run() -> anyhow::Result<()> {
         &state,
         vert_src,
         frag_src,
+        wgpu::VertexStepMode::Vertex,
         ["vertex_in"],
         None,
         &[state.surface_format],
@@ -433,8 +434,7 @@ pub async fn run() -> anyhow::Result<()> {
         state.device.create_buffer_init(&BufferInitDescriptor {
             label: Some("uniform buffer"),
             contents: bytemuck::cast_slice(&[1.0f32, 0.0, 0.0, 1.0]),
-            usage: wgpu::BufferUsages::UNIFORM
-            | wgpu::BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
     log::warn!("updating transient cache");
