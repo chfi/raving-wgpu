@@ -1636,11 +1636,13 @@ impl GraphOps {
                         pass.set_vertex_buffer(*slot, buf.slice(..));
                     }
 
-                    // pass.set_bind_group(index, bind_group, offsets)
+                    let mut next_ix = 0;
                     for (stage, bind_groups) in op_state.bind_groups.iter() {
-                        for (ix, group) in bind_groups.iter().enumerate() {
+                        for (_ix, group) in bind_groups.iter().enumerate() {
+                            let ix = next_ix;
                             pass.set_bind_group(ix as u32, group, &[]);
                         }
+                        next_ix += 1;
                     }
 
                     op_state.set_render_push_constants(&mut pass);
@@ -1666,7 +1668,6 @@ impl GraphOps {
                             let count = (size / stride) as u32;
                             0..count
                         };
-                        // dbg!((&vertices, &instances));
 
                         pass.draw(vertices, instances);
                     }

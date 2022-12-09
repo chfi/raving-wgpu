@@ -70,12 +70,8 @@ impl Polyline {
         }
 
         let camera = DynamicCamera2d::new(
-            //
             Vec2::zero(),
-            //
-            // Vec2::new(10.0, 10.0),
             Vec2::new(1.0, 1.0),
-            // Vec2::new(0.5, 0.5),
         );
 
         let uniform = {

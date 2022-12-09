@@ -44,14 +44,6 @@ impl GroupBindings {
         Ok(bind_groups)
     }
 
-    pub fn create_bind_group_new(
-        &self,
-        state: &crate::State,
-        layout: &wgpu::BindGroupLayout,
-    ) {
-        todo!();
-    }
-
     pub fn create_bind_group(
         &self,
         state: &crate::State,
@@ -124,17 +116,6 @@ impl GroupBindings {
         dbg!(group_bindings);
 
         for bindings in group_bindings.iter() {
-            let group_ix = bindings.group_ix;
-
-            // Group indices both have to be compact and sorted
-            if expected_group != group_ix {
-                anyhow::bail!(
-                    "Missing group index: Expected {}, but saw {}",
-                    expected_group,
-                    group_ix
-                );
-            }
-
             let bind_group_layout = bindings.create_bind_group_layout(state);
             bind_group_layouts.push(bind_group_layout);
 
@@ -196,37 +177,13 @@ impl GroupBindings {
 
         let mut expected_group = 0;
         for (group_ix, mut defs) in shader_bindings {
-            // Group and binding indices both have to be compact,
-            // so while `shader_bindings` is a BTreeMap, its keys
-            // have to be in some `0..n` range, and iterated in order
-            if expected_group != group_ix {
-                anyhow::bail!(
-                    "Missing group index: Expected {}, but saw {}",
-                    expected_group,
-                    group_ix
-                );
-            }
 
             defs.sort_by_key(|(def, space)| def.binding.binding);
             final_bindings.push(defs.clone());
 
             let mut entries: Vec<wgpu::BindGroupLayoutEntry> = Vec::new();
 
-            for (binding_ix, (def, space)) in defs.iter().enumerate() {
-                if binding_ix as u32 != def.binding.binding
-                    || expected_group != def.binding.group
-                {
-                    dbg!(&defs);
-                    anyhow::bail!(
-                        "Binding index mismatch: Was (group {}, binding {}),\
-                        but expected (group {}, binding {})",
-                        def.binding.group,
-                        def.binding.binding,
-                        expected_group,
-                        binding_ix
-                    );
-                }
-
+            for (_binding_ix, (def, space)) in defs.iter().enumerate() {
                 let (ty, count) = match &def.ty {
                     naga::TypeInner::Image {
                         dim,
