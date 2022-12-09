@@ -1654,7 +1654,9 @@ impl GraphOps {
                         );
                         pass.draw_indexed(indices, 0, instances);
                     } else {
-                        let vertices = {
+                        let vertices = if let Some(range) = op_state.vertices.clone() {
+                            range
+                        } else {
                             let (_, size, stride) = vertex_buffers[0].1;
 
                             // TODO: optionally set vertices/instances via NodeOpState
@@ -1931,6 +1933,7 @@ pub struct NodeOpState {
     vertex_buffers: BTreeMap<u32, LocalSocketIx>,
     index_buffer: Option<LocalSocketIx>,
 
+    pub vertices: Option<std::ops::Range<u32>>,
     pub instances: Option<std::ops::Range<u32>>,
 
     attachments: BTreeMap<u32, LocalSocketIx>,

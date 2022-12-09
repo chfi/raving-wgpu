@@ -111,11 +111,25 @@ impl Polyline {
                 "/shaders/examples/polyline.frag.spv"
             ));
 
-            graph.add_graphics_schema(
+            let primitive = wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                front_face: wgpu::FrontFace::Cw,
+                cull_mode: None,
+                // cull_mode: Some(wgpu::Face::Front),
+                polygon_mode: wgpu::PolygonMode::Fill,
+
+                strip_index_format: None,
+                unclipped_depth: false,
+                conservative: false,
+            };
+
+
+            graph.add_graphics_schema_custom(
                 state,
                 vert_src,
                 frag_src,
-                wgpu::VertexStepMode::Vertex,
+                primitive,
+                wgpu::VertexStepMode::Instance,
                 ["vertex_in"],
                 None,
                 &[state.surface_format],
@@ -166,6 +180,11 @@ impl Polyline {
 
         result.vertex_count = vx_count;
         result.vertex_buffer = Some(vertex);
+        
+        result.graph.set_node_preprocess_fn(draw_node, move |_ctx, op_state| {
+            op_state.vertices = Some(0..6);
+            op_state.instances = Some(0..vx_count as u32);
+        });
 
         Ok(result)
     }

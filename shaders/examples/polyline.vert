@@ -22,7 +22,6 @@ void main() {
   p0.z = 0.0;
   p1.z = 0.0;
 
-
   vec4 u = p1 - p0;
   float len = length(u);
   vec4 n_u = u/len;
