@@ -10,16 +10,9 @@ winit = "0.27"
 env_logger = "0.9"
 log = "0.4"
 
-# egui-wgpu hasn't been published with wgpu 0.14 support yet,
-# so grabbing a git commit for now
-# egui = { version = "0.19" }
-# egui-wgpu = { version = "0.19" }
-# egui-winit = { version = "0.19" }
-
-egui = { git = "https://github.com/emilk/egui.git", rev = "4c82519" }
-egui-wgpu = { git = "https://github.com/emilk/egui.git", rev = "4c82519" }
-egui-winit = { git = "https://github.com/emilk/egui.git", rev = "4c82519" }
-# egui-wgpu = { version = "0.19", features = ["winit"] }
+egui = { version = "0.20" }
+egui-wgpu = { version = "0.20" }
+egui-winit = { version = "0.20" }
 
 lyon = "1.0"
 

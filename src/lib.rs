@@ -14,14 +14,12 @@ pub mod shader;
 pub mod texture;
 
 pub mod camera;
-pub mod input;
 pub mod gui;
+pub mod input;
 
 pub mod util;
 
 pub use graph::*;
-
-
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -67,7 +65,7 @@ pub async fn run() -> anyhow::Result<()> {
     let event_loop = EventLoop::new();
     let window = WindowBuilder::new().build(&event_loop).unwrap();
 
-    let mut state = State::new(&window).await?;
+    let state = State::new(&window).await?;
 
     Ok(())
 }
@@ -127,7 +125,7 @@ impl State {
 
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-            | wgpu::TextureUsages::COPY_DST,
+                | wgpu::TextureUsages::COPY_DST,
             format: surface_format,
             width: size.width,
             height: size.height,
