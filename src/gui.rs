@@ -1,4 +1,4 @@
-use egui::{ClippedPrimitive, TexturesDelta};
+use egui::{ClippedPrimitive, MultiTouchInfo, TexturesDelta};
 
 use egui_wgpu::renderer::ScreenDescriptor;
 use wgpu::CommandEncoder;
@@ -10,42 +10,6 @@ use std::sync::Arc;
 use crate::State;
 
 pub use egui;
-
-pub type DebugWidget = Arc<
-    dyn Fn(&mut egui::Ui) -> egui::InnerResponse<()> + Send + Sync + 'static,
->;
-
-pub struct DebugWindow {
-    title: String,
-
-    slots: Vec<(String, DebugWidget)>,
-}
-
-impl DebugWindow {
-    pub fn initialize(title: &str) -> Self {
-        Self {
-            title: title.to_string(),
-            slots: Vec::new(),
-        }
-    }
-
-    pub fn push_slot<F>(&mut self, name: &str, widget: F)
-    where F: Fn(&mut egui::Ui) -> egui::InnerResponse<()> + Send + Sync + 'static,
-    {
-        let widget = Arc::new(widget) as DebugWidget;
-        self.slots.push((name.to_string(), widget));
-    }
-
-    pub fn show(&self, ctx: &egui::Context) {
-        egui::Window::new(&self.title).show(ctx, |ui| {
-            ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
-                for (_name, widget) in self.slots.iter() {
-                    let _resp = widget(ui);
-                }
-            })
-        });
-    }
-}
 
 pub struct EguiCtx {
     ctx: egui::Context,
@@ -95,6 +59,30 @@ impl EguiCtx {
         }
     }
 
+    /// Do not use `run` or `begin/end_frame` on the returned context,
+    /// use the methods here on `EguiCtx` instead
+    pub fn ctx(&self) -> &egui::Context {
+        &self.ctx
+    }
+
+    pub fn begin_frame(&mut self, window: &Window) {
+        let raw_input = self.winit_state.take_egui_input(&window);
+        self.ctx.begin_frame(raw_input);
+    }
+
+    pub fn end_frame(&mut self, window: &Window) {
+        let full_output = self.ctx.end_frame();
+        self.winit_state.handle_platform_output(
+            window,
+            &self.ctx,
+            full_output.platform_output,
+        );
+
+        let clipped = self.ctx.tessellate(full_output.shapes);
+        self.clipped_primitives = clipped;
+        self.textures_delta = full_output.textures_delta;
+    }
+
     pub fn run(
         &mut self,
         window: &Window,
@@ -112,6 +100,17 @@ impl EguiCtx {
         let clipped = self.ctx.tessellate(full_output.shapes);
         self.clipped_primitives = clipped;
         self.textures_delta = full_output.textures_delta;
+    }
+
+    pub fn multi_touch(&self) -> Option<MultiTouchInfo> {
+        self.ctx.multi_touch()
+    }
+
+    pub fn pointer_latest_pos(&self) -> Option<egui::Pos2> {
+        self.ctx.pointer_latest_pos()
+    }
+    pub fn pointer_interact_pos(&self) -> Option<egui::Pos2> {
+        self.ctx.pointer_interact_pos()
     }
 
     pub fn on_event(
@@ -176,5 +175,42 @@ impl EguiCtx {
                 &screen_desc,
             );
         }
+    }
+}
+
+pub type DebugWidget = Arc<
+    dyn Fn(&mut egui::Ui) -> egui::InnerResponse<()> + Send + Sync + 'static,
+>;
+
+pub struct DebugWindow {
+    title: String,
+
+    slots: Vec<(String, DebugWidget)>,
+}
+
+impl DebugWindow {
+    pub fn initialize(title: &str) -> Self {
+        Self {
+            title: title.to_string(),
+            slots: Vec::new(),
+        }
+    }
+
+    pub fn push_slot<F>(&mut self, name: &str, widget: F)
+    where
+        F: Fn(&mut egui::Ui) -> egui::InnerResponse<()> + Send + Sync + 'static,
+    {
+        let widget = Arc::new(widget) as DebugWidget;
+        self.slots.push((name.to_string(), widget));
+    }
+
+    pub fn show(&self, ctx: &egui::Context) {
+        egui::Window::new(&self.title).show(ctx, |ui| {
+            ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+                for (_name, widget) in self.slots.iter() {
+                    let _resp = widget(ui);
+                }
+            })
+        });
     }
 }
