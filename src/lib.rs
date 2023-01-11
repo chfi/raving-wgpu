@@ -60,24 +60,32 @@ pub async fn initialize(
     Ok((event_loop, window, state))
 }
 
-pub async fn run() -> anyhow::Result<()> {
-    env_logger::init();
-    let event_loop = EventLoop::new();
-    let window = WindowBuilder::new().build(&event_loop).unwrap();
+pub struct WindowState {
+    pub surface: wgpu::Surface,
+    pub config: wgpu::SurfaceConfiguration,
+    pub size: winit::dpi::PhysicalSize<u32>,
+    pub surface_format: wgpu::TextureFormat,
+}
 
-    let state = State::new(&window).await?;
-
-    Ok(())
+impl WindowState {
+    pub fn resize(
+        &mut self,
+        device: &wgpu::Device,
+        new_size: winit::dpi::PhysicalSize<u32>,
+    ) {
+        if new_size.width > 0 && new_size.height > 0 {
+            self.size = new_size;
+            self.config.width = new_size.width;
+            self.config.height = new_size.height;
+            self.surface.configure(device, &self.config);
+        }
+    }
 }
 
 pub struct State {
-    pub surface: wgpu::Surface,
+    pub window: WindowState,
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
-    pub config: wgpu::SurfaceConfiguration,
-    pub size: winit::dpi::PhysicalSize<u32>,
-
-    pub surface_format: wgpu::TextureFormat,
 }
 
 impl State {
@@ -135,39 +143,21 @@ impl State {
 
         surface.configure(&device, &config);
 
-        Ok(State {
+        let window = WindowState {
             surface,
-            device,
-            queue,
             config,
             size,
             surface_format,
+        };
+
+        Ok(State {
+            device,
+            queue,
+            window,
         })
     }
 
     pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
-        if new_size.width > 0 && new_size.height > 0 {
-            self.size = new_size;
-            self.config.width = new_size.width;
-            self.config.height = new_size.height;
-            self.surface.configure(&self.device, &self.config);
-        }
+        self.window.resize(&self.device, new_size);
     }
 }
-
-/*
-pub fn add(left: usize, right: usize) -> usize {
-    left + right
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
-*/

@@ -33,7 +33,7 @@ impl EguiCtx {
 
         let egui_state = egui_winit::State::new(event_loop);
 
-        let output_color_format = state.surface_format;
+        let output_color_format = state.window.surface_format;
         let msaa_samples = 1;
 
         let load_op = clear_color
@@ -127,7 +127,7 @@ impl EguiCtx {
         encoder: &mut CommandEncoder,
     ) {
         let screen_desc = ScreenDescriptor {
-            size_in_pixels: [state.size.width, state.size.height],
+            size_in_pixels: [state.window.size.width, state.window.size.height],
             pixels_per_point: self.winit_state.pixels_per_point(),
         };
 
