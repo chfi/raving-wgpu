@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use anyhow::Result;
 use raving_wgpu::input::{TouchHandler, TouchResult};
-use raving_wgpu::NodeId;
 use raving_wgpu::State;
+use raving_wgpu::{NodeId, WindowState};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 use winit::event::{ElementState, Event, VirtualKeyCode, WindowEvent};
 use winit::event_loop::ControlFlow;
@@ -132,7 +132,7 @@ impl GameOfLife {
         1 << i
     }
 
-    fn new(state: &State) -> Result<Self> {
+    fn new(state: &State, window: &WindowState) -> Result<Self> {
         let mut graph = Graph::new();
 
         let view = ViewMachine::new(0.95, 0.0, 0.0);
@@ -227,7 +227,7 @@ impl GameOfLife {
                 wgpu::VertexStepMode::Vertex,
                 ["vertex_in"],
                 None,
-                &[state.surface_format],
+                &[window.surface_format],
             )?
         };
 
@@ -356,13 +356,7 @@ impl GameOfLife {
 
                     let delta = mid_ - mid;
 
-                    // let mid__ = mid * quot as f32;
-
-                    // let delta = mid__ - mid;
-
                     let q = quot as f32;
-
-                    // let delta = Vec2::new(self.view.x * q, self.view.y * q);
 
                     self.view.x += delta.x as f32;
                     self.view.y += delta.y as f32;
@@ -370,29 +364,6 @@ impl GameOfLife {
                     self.view.prev_y = self.view.y;
 
                     self.cfg.scale = new_scale;
-
-                    // self.cfg.scale = self.cfg.scale.max(1.0);
-
-                    /*
-
-                    let [d_x, d_y] = [x1 - x0, y1 - y0];
-
-                    let dist_0 = (d_x * d_x + d_y * d_y).sqrt();
-
-                    let x0_ = x0 + dx0;
-                    let y0_ = y0 + dy0;
-                    let x1_ = x1 + dx1;
-                    let y1_ = y1 + dy1;
-
-                    let [d_x, d_y] = [x1_ - x0_, y1_ - y0_];
-                    let dist_1 = (d_x * d_x + d_y * d_y).sqrt();
-
-                    let orig_x = self.view.x;
-                    let orig_y = self.view.y;
-
-                    self.cfg.scale *= quot as f32;
-                    self.cfg.scale = self.cfg.scale.max(1.0);
-                    */
                 }
             }
         }
@@ -403,10 +374,11 @@ impl GameOfLife {
 
     fn render(
         &mut self,
-        state: &mut State,
+        state: &State,
+        window: &mut WindowState,
         window_dims: [u32; 2],
     ) -> Result<()> {
-        if let Ok(output) = state.surface.get_current_texture() {
+        if let Ok(output) = window.surface.get_current_texture() {
             let output_view = output
                 .texture
                 .create_view(&wgpu::TextureViewDescriptor::default());
@@ -418,7 +390,7 @@ impl GameOfLife {
                 // let w_size = window.inner_size();
                 // let size = [w_size.width, w_size.height];
                 let size = window_dims;
-                let format = state.surface_format;
+                let format = window.surface_format;
 
                 transient_res.insert(
                     "swapchain".into(),
@@ -506,7 +478,7 @@ impl GameOfLife {
                 self.iteration_step += 1;
             }
         } else {
-            state.resize(state.size);
+            window.resize(&state.device);
         }
 
         Ok(())
@@ -514,12 +486,12 @@ impl GameOfLife {
 }
 
 async fn run() -> anyhow::Result<()> {
-    let (event_loop, window, mut state) = raving_wgpu::initialize().await?;
+    let (event_loop, state, mut window) = raving_wgpu::initialize().await?;
 
-    let size = window.inner_size();
+    let size = window.window.inner_size();
 
     let dims = [size.width, size.height];
-    let mut gol = GameOfLife::new(&state)?;
+    let mut gol = GameOfLife::new(&state, &window)?;
 
     let mut first_resize = true;
 
@@ -530,7 +502,7 @@ async fn run() -> anyhow::Result<()> {
             Event::WindowEvent {
                 ref event,
                 window_id,
-            } if window_id == window.id() => match event {
+            } if window_id == window.window.id() => match event {
                 WindowEvent::Touch(touch) => {
                     gol.view.handle_touch(gol.cfg.scale, touch);
                     //
@@ -574,19 +546,19 @@ async fn run() -> anyhow::Result<()> {
                     if first_resize {
                         first_resize = false;
                     } else {
-                        state.resize(*physical_size);
+                        window.resize(&state.device);
                     }
                 }
                 WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
-                    state.resize(**new_inner_size);
+                    window.resize(&state.device);
                 }
                 _ => {}
             },
-            Event::RedrawRequested(window_id) if window_id == window.id() => {
-                let w_size = window.inner_size();
+            Event::RedrawRequested(window_id) if window_id == window.window.id() => {
+                let w_size = window.window.inner_size();
                 let size = [w_size.width, w_size.height];
 
-                gol.render(&mut state, size).unwrap();
+                gol.render(&state, &mut window, size).unwrap();
             }
             Event::MainEventsCleared => {
                 // RedrawRequested will only trigger once, unless we manually
@@ -598,10 +570,9 @@ async fn run() -> anyhow::Result<()> {
                 gol.update(dt);
 
                 {
-                    let w_size = window.inner_size();
-                    let size = [w_size.width, w_size.height];
+                    let w_size = window.window.inner_size();
 
-                    gol.cfg.viewport_size = size;
+                    gol.cfg.viewport_size = w_size.into();
 
                     state.queue.write_buffer(
                         &gol.cfg_buffer,
@@ -610,7 +581,7 @@ async fn run() -> anyhow::Result<()> {
                     );
                 }
 
-                window.request_redraw();
+                window.window.request_redraw();
             }
 
             _ => {}

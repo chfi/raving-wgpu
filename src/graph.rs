@@ -555,7 +555,6 @@ pub trait ExecuteNode {
     ) -> Result<Vec<BindGroup>>;
 }
 
-
 pub struct ComputeShaderOp {
     shader: Arc<crate::shader::ComputeShader>,
     // mapping from compute shader global var. name to local socket
@@ -594,7 +593,7 @@ impl ExecuteNode for GraphicsPipelineOp {
         state: &crate::State,
         resources: &[Resource],
     ) -> Result<Vec<BindGroup>> {
-        /* 
+        /*
         let mut binding_map = HashMap::default();
 
         for (g_var, socket) in &self.resource_map {
@@ -620,7 +619,7 @@ impl ExecuteNode for GraphicsPipelineOp {
         todo!();
 
         // self.pipeline
-            // .create_bind_groups_impl(state, resources, &binding_map)
+        // .create_bind_groups_impl(state, resources, &binding_map)
     }
 }
 
@@ -673,7 +672,7 @@ impl ExecuteNode for ComputeShaderOp {
         if self.workgroup_counts == [0, 0, 0] {
             anyhow::bail!("Compute shader had zero workgroup count");
         }
-        
+
         let mut pass =
             cmd.begin_compute_pass(&ComputePassDescriptor { label: None });
 
@@ -1122,64 +1121,6 @@ impl Graph {
         self.resources.push(res);
         id
     }
-}
-
-pub fn example_graph(
-    state: &mut super::State,
-    dims: [u32; 2],
-) -> Result<Graph> {
-    let mut graph = Graph::default();
-
-    let create_image = create_image_node(
-        &mut graph,
-        // TextureFormat::Bgra8Unorm,
-        TextureFormat::Rgba8Unorm,
-        TextureUsages::COPY_DST
-            | TextureUsages::COPY_SRC
-            | TextureUsages::TEXTURE_BINDING
-            | TextureUsages::STORAGE_BINDING,
-        "window_dims",
-    );
-
-    let mut dims_map = rhai::Map::default();
-    dims_map.insert("x".into(), rhai::Dynamic::from_int(dims[0] as i64));
-    dims_map.insert("y".into(), rhai::Dynamic::from_int(dims[1] as i64));
-
-    graph
-        .graph_inputs
-        .insert("window_dims".into(), dims_map.into());
-
-    // let compute = example_compute_node(state, &mut graph, ())?;
-
-    let compute = {
-        let shader_src = include_bytes!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/shaders/shader.comp.spv"
-        ));
-        let compute = create_compute_node(state, &mut graph, shader_src)?;
-
-        // {
-        //     let mut node = 
-        // }
-
-        
-        compute
-    };
-
-    let buffer_size = 512;
-
-    let buffer = create_buffer_node(
-        &mut graph,
-        BufferUsages::COPY_SRC | BufferUsages::STORAGE,
-        buffer_size,
-    );
-
-    dbg!();
-    graph.link_nodes(create_image, "output", compute, "image")?;
-    graph.link_nodes(buffer, "output", compute, "my_buf")?;
-    dbg!();
-
-    Ok(graph)
 }
 
 pub fn create_compute_node(

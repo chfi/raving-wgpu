@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use raving_wgpu::gui::EguiCtx;
-use raving_wgpu::{NewState, WindowState};
+use raving_wgpu::{State, WindowState};
 use wgpu::Maintain;
 use winit::event::{ElementState, Event, VirtualKeyCode, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
@@ -17,7 +17,7 @@ struct AppWindow {
 impl AppWindow {
     fn init(
         title: &str,
-        state: &NewState,
+        state: &State,
         event_loop: &EventLoop<()>,
     ) -> Result<Self> {
         let window =
@@ -25,7 +25,7 @@ impl AppWindow {
 
         let win_state = state.prepare_window(window)?;
 
-        let egui_ctx = EguiCtx::init_new(
+        let egui_ctx = EguiCtx::init(
             &state,
             win_state.surface_format,
             &event_loop,
@@ -38,9 +38,8 @@ impl AppWindow {
         })
     }
 
-    fn resize(&mut self, state: &NewState) {
-        let size = self.window.inner_size();
-        self.state.resize(&state.device, size);
+    fn resize(&mut self, state: &State) {
+        self.state.resize(&state.device);
     }
 
     fn on_event<'a>(&mut self, event: &WindowEvent<'a>) {
@@ -49,7 +48,7 @@ impl AppWindow {
 }
 
 async fn run() -> Result<()> {
-    let state = NewState::new().await?;
+    let state = State::new().await?;
 
     let event_loop = EventLoop::new();
 
@@ -59,15 +58,13 @@ async fn run() -> Result<()> {
         let window0 = AppWindow::init("first window", &state, &event_loop)?;
         let window1 = AppWindow::init("second window", &state, &event_loop)?;
 
-        let wid0 = window0.window.id();
-        let wid1 = window1.window.id();
+        let wid0 = window0.state.window.id();
+        let wid1 = window1.state.window.id();
         windows.insert(wid0, window0);
         windows.insert(wid1, window1);
 
         (wid0, wid1)
     };
-
-    // let mut appwin = AppWindow::init("first window", &state, &event_loop)?;
 
     let mut is_ready = false;
     let mut prev_frame_t = std::time::Instant::now();
@@ -112,7 +109,7 @@ async fn run() -> Result<()> {
                     },
                 );
 
-                appwin.egui.render_new(
+                appwin.egui.render(
                     &state,
                     &appwin.state,
                     &output_view,
@@ -130,7 +127,7 @@ async fn run() -> Result<()> {
 
             {
                 let appwin = windows.get_mut(&wid0).unwrap();
-                appwin.egui.run(&appwin.window, |ctx| {
+                appwin.egui.run(&appwin.state.window, |ctx| {
                     egui::Window::new("hello world window").show(ctx, |ui| {
                         ui.label("hello!!!");
                         if ui.button("a button!!!").clicked() {
@@ -138,12 +135,12 @@ async fn run() -> Result<()> {
                         }
                     });
                 });
-                appwin.window.request_redraw();
+                appwin.state.window.request_redraw();
             }
 
             {
                 let appwin = windows.get_mut(&wid1).unwrap();
-                appwin.egui.run(&appwin.window, |ctx| {
+                appwin.egui.run(&appwin.state.window, |ctx| {
                     egui::Window::new("hello world window").show(ctx, |ui| {
                         ui.label("a bunch of buttons");
                         for _ix in 0..10 {
@@ -153,7 +150,7 @@ async fn run() -> Result<()> {
                         }
                     });
                 });
-                appwin.window.request_redraw();
+                appwin.state.window.request_redraw();
             }
         }
     })

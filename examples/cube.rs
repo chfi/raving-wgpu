@@ -8,7 +8,7 @@ use winit::event_loop::{ControlFlow, EventLoop, EventLoopWindowTarget};
 use winit::window::Window;
 
 use raving_wgpu::graph::dfrog::{Graph, InputResource};
-use raving_wgpu::{NodeId, State};
+use raving_wgpu::{NodeId, State, WindowState};
 
 use anyhow::Result;
 
@@ -285,6 +285,7 @@ impl CubeExample {
     fn init(
         event_loop: &EventLoopWindowTarget<()>,
         state: &State,
+        window: &WindowState,
     ) -> Result<Self> {
         let mut graph = Graph::new();
 
@@ -317,7 +318,7 @@ impl CubeExample {
                 wgpu::VertexStepMode::Vertex,
                 ["vertex_in"],
                 Some("indices"),
-                &[state.surface_format],
+                &[window.surface_format],
             )?
         };
 
@@ -364,7 +365,8 @@ impl CubeExample {
         // set 0, binding 1, r_color
         // graph.add_link_from_transient("cube_texture", draw_node, 4);
 
-        let egui = EguiCtx::init(event_loop, state, None);
+        let egui =
+            EguiCtx::init(state, window.surface_format, event_loop, None);
 
         let touch = TouchHandler::default();
 
@@ -385,14 +387,17 @@ impl CubeExample {
         Ok(result)
     }
 
-    fn render(&mut self, state: &mut State) -> Result<()> {
-        let dims = state.size;
-        let size = [dims.width, dims.height];
+    fn render(
+        &mut self,
+        state: &State,
+        window: &mut WindowState,
+    ) -> Result<()> {
+        let size: [u32; 2] = window.window.inner_size().into();
 
         let mut transient_res: HashMap<String, InputResource<'_>> =
             HashMap::default();
 
-        if let Ok(output) = state.surface.get_current_texture() {
+        if let Ok(output) = window.surface.get_current_texture() {
             {
                 let uniform_data = self.camera.to_matrix();
                 state.queue.write_buffer(
@@ -406,7 +411,7 @@ impl CubeExample {
                 .texture
                 .create_view(&wgpu::TextureViewDescriptor::default());
 
-            let format = state.surface_format;
+            let format = window.surface_format;
 
             transient_res.insert(
                 "swapchain".into(),
@@ -474,7 +479,7 @@ impl CubeExample {
                 },
             );
 
-            self.egui.render(state, &output_view, &mut encoder);
+            self.egui.render(state, window, &output_view, &mut encoder);
 
             state.queue.submit(Some(encoder.finish()));
 
@@ -485,7 +490,7 @@ impl CubeExample {
 
             output.present();
         } else {
-            state.resize(state.size);
+            window.resize(&state.device);
         }
 
         Ok(())
@@ -493,12 +498,11 @@ impl CubeExample {
 }
 
 async fn run() -> anyhow::Result<()> {
-    let (event_loop, window, mut state) = raving_wgpu::initialize().await?;
+    let (event_loop, state, mut window) = raving_wgpu::initialize().await?;
 
-    let size = window.inner_size();
-    let dims = [size.width, size.height];
+    let dims: [u32; 2] = window.window.inner_size().into();
 
-    let mut cube = CubeExample::init(&event_loop, &state)?;
+    let mut cube = CubeExample::init(&event_loop, &state, &window)?;
 
     let mut first_resize = true;
 
@@ -510,8 +514,7 @@ async fn run() -> anyhow::Result<()> {
                 ref event,
                 window_id,
             } => {
-                let size = window.inner_size();
-                let dims = [size.width, size.height];
+                let dims: [u32; 2] = window.window.inner_size().into();
                 let egui_resp = cube.on_event(dims, event);
 
                 if !egui_resp.consumed {
@@ -533,10 +536,10 @@ async fn run() -> anyhow::Result<()> {
                             if first_resize {
                                 first_resize = false;
                             } else {
-                                let old = state.size;
+                                let old = window.size;
                                 let new = *phys_size;
 
-                                state.resize(*phys_size);
+                                window.resize(&state.device);
 
                                 let old = Vec2::new(
                                     old.width as f32,
@@ -556,21 +559,17 @@ async fn run() -> anyhow::Result<()> {
                             new_inner_size,
                             ..
                         } => {
-                            state.resize(**new_inner_size);
+                            window.resize(&state.device);
                         }
                         _ => {}
                     }
                 }
             }
 
-            Event::RedrawRequested(window_id) if window_id == window.id() => {
-                let w_size = window.inner_size();
-                let size = [w_size.width, w_size.height];
-
-                cube.render(&mut state).unwrap();
-
-                // polyline.render(&mut state, size).unwrap();
-                // gol.render(&mut state, size).unwrap();
+            Event::RedrawRequested(window_id)
+                if window_id == window.window.id() =>
+            {
+                cube.render(&state, &mut window).unwrap();
             }
             Event::MainEventsCleared => {
                 // RedrawRequested will only trigger once, unless we manually
@@ -579,9 +578,9 @@ async fn run() -> anyhow::Result<()> {
                 let dt = prev_frame_t.elapsed().as_secs_f32();
                 prev_frame_t = std::time::Instant::now();
 
-                cube.update(&window, dt);
+                cube.update(&window.window, dt);
 
-                window.request_redraw();
+                window.window.request_redraw();
             }
 
             _ => {}

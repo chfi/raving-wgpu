@@ -6,7 +6,7 @@ use winit::event_loop::ControlFlow;
 use anyhow::Result;
 
 async fn run() -> Result<()> {
-    let (event_loop, mut state, mut window_state) =
+    let (event_loop, state, mut window_state) =
         raving_wgpu::initialize().await?;
 
     let mut egui_ctx = EguiCtx::init(
