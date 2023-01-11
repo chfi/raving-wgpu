@@ -7,7 +7,7 @@ use winit::{event_loop::EventLoopWindowTarget, window::Window};
 use crossbeam::atomic::AtomicCell;
 use std::sync::Arc;
 
-use crate::State;
+use crate::{NewState, State, WindowState};
 
 pub use egui;
 
@@ -24,6 +24,42 @@ pub struct EguiCtx {
 }
 
 impl EguiCtx {
+    pub fn init_new(
+        state: &NewState,
+        surface_format: wgpu::TextureFormat,
+        ev_loop_tgt: &EventLoopWindowTarget<()>,
+        clear_color: Option<wgpu::Color>,
+    ) -> Self {
+        let egui_ctx = egui::Context::default();
+
+        let egui_state = egui_winit::State::new(ev_loop_tgt);
+
+        let output_color_format = surface_format;
+        let msaa_samples = 1;
+
+        let load_op = clear_color
+            .map(wgpu::LoadOp::Clear)
+            .unwrap_or(wgpu::LoadOp::Load);
+
+        let renderer = egui_wgpu::Renderer::new(
+            &state.device,
+            output_color_format,
+            None,
+            msaa_samples,
+        );
+
+        let clipped_primitives = Vec::new();
+
+        Self {
+            ctx: egui_ctx,
+            winit_state: egui_state,
+            renderer,
+            clipped_primitives,
+            textures_delta: TexturesDelta::default(),
+            load_op,
+        }
+    }
+
     pub fn init(
         event_loop: &EventLoopWindowTarget<()>,
         state: &State,
@@ -118,6 +154,64 @@ impl EguiCtx {
         event: &winit::event::WindowEvent<'_>,
     ) -> egui_winit::EventResponse {
         self.winit_state.on_event(&self.ctx, event)
+    }
+
+    pub fn render_new(
+        &mut self,
+        state: &NewState,
+        window: &WindowState,
+        render_target: &wgpu::TextureView,
+        encoder: &mut CommandEncoder,
+    ) {
+        let screen_desc = ScreenDescriptor {
+            size_in_pixels: [window.size.width, window.size.height],
+            pixels_per_point: self.winit_state.pixels_per_point(),
+        };
+
+        self.renderer.update_buffers(
+            &state.device,
+            &state.queue,
+            encoder,
+            &self.clipped_primitives,
+            &screen_desc,
+        );
+
+        for (id, image_delta) in &self.textures_delta.set {
+            self.renderer.update_texture(
+                &state.device,
+                &state.queue,
+                *id,
+                image_delta,
+            );
+        }
+
+        for id in &self.textures_delta.free {
+            self.renderer.free_texture(id);
+        }
+
+        {
+            let mut render_pass =
+                encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    color_attachments: &[Some(
+                        wgpu::RenderPassColorAttachment {
+                            view: render_target,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: self.load_op,
+                                store: true,
+                            },
+                        },
+                    )],
+                    depth_stencil_attachment: None,
+                    label: Some("egui_render"),
+                });
+
+            self.renderer.render(
+                &mut render_pass,
+                &self.clipped_primitives,
+                &screen_desc,
+            );
+        }
     }
 
     pub fn render(
