@@ -237,7 +237,6 @@ impl CubeExample {
                 pos *= self.camera.size;
                 pos += self.camera.center;
 
-
                 let s_dists = raving_wgpu::camera::dist_to_rect_sides(
                     self.camera.center,
                     self.camera.size,
@@ -258,7 +257,7 @@ impl CubeExample {
                 fst_pos.y *= -1.0;
                 fst_pos *= self.camera.size;
                 fst_pos += self.camera.center;
-                
+
                 let mut snd_pos = snd.pos - Vec2::new(0.5, 0.5);
                 snd_pos.y *= -1.0;
                 snd_pos *= self.camera.size;
@@ -272,7 +271,7 @@ impl CubeExample {
                     snd_pos,
                     snd_pos + snd.delta,
                 );
-                
+
                 self.camera.pinch_anchored(
                     snd_pos,
                     fst_pos,

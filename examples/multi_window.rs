@@ -10,7 +10,6 @@ use anyhow::Result;
 use winit::window::{WindowBuilder, WindowId};
 
 struct AppWindow {
-    window: winit::window::Window,
     state: WindowState,
     egui: EguiCtx,
 }
@@ -24,7 +23,7 @@ impl AppWindow {
         let window =
             WindowBuilder::new().with_title(title).build(event_loop)?;
 
-        let win_state = state.prepare_window(&window)?;
+        let win_state = state.prepare_window(window)?;
 
         let egui_ctx = EguiCtx::init_new(
             &state,
@@ -34,7 +33,6 @@ impl AppWindow {
         );
 
         Ok(Self {
-            window,
             state: win_state,
             egui: egui_ctx,
         })

@@ -6,10 +6,15 @@ use winit::event_loop::ControlFlow;
 use anyhow::Result;
 
 async fn run() -> Result<()> {
-    let (event_loop, window, mut state) = raving_wgpu::initialize().await?;
+    let (event_loop, mut state, mut window_state) =
+        raving_wgpu::initialize().await?;
 
-    let mut egui_ctx =
-        EguiCtx::init(&event_loop, &state, Some(wgpu::Color::BLACK));
+    let mut egui_ctx = EguiCtx::init(
+        &state,
+        window_state.surface_format,
+        &event_loop,
+        Some(wgpu::Color::BLACK),
+    );
 
     let mut first_resize = true;
 
@@ -43,19 +48,21 @@ async fn run() -> Result<()> {
                         if first_resize {
                             first_resize = false;
                         } else {
-                            state.resize(*physical_size);
+                            window_state.resize(&state.device);
                         }
                     }
                 }
             }
-            Event::RedrawRequested(window_id) if window_id == window.id() => {
+            Event::RedrawRequested(window_id)
+                if window_id == window_state.window.id() =>
+            {
                 // let w_size = window.inner_size();
                 // let size = [w_size.width, w_size.height];
                 // gol.render(&mut state, size).unwrap();
 
                 state.device.poll(Maintain::Wait);
 
-                if let Ok(output) = state.surface.get_current_texture() {
+                if let Ok(output) = window_state.surface.get_current_texture() {
                     let output_view = output
                         .texture
                         .create_view(&wgpu::TextureViewDescriptor::default());
@@ -66,12 +73,17 @@ async fn run() -> Result<()> {
                         },
                     );
 
-                    egui_ctx.render(&state, &output_view, &mut encoder);
+                    egui_ctx.render(
+                        &state,
+                        &window_state,
+                        &output_view,
+                        &mut encoder,
+                    );
 
                     state.queue.submit(Some(encoder.finish()));
                     output.present();
                 } else {
-                    state.resize(state.size);
+                    window_state.resize(&state.device);
                 }
 
                 // renderer.update_texture(device, queue, id, image_delta)
@@ -80,13 +92,13 @@ async fn run() -> Result<()> {
                 let dt = prev_frame_t.elapsed().as_secs_f32();
                 prev_frame_t = std::time::Instant::now();
 
-                egui_ctx.run(&window, |ctx| {
+                egui_ctx.run(&window_state.window, |ctx| {
                     egui::CentralPanel::default().show(&ctx, |ui| {
                         ui.label("hello world");
                     });
                 });
 
-                window.request_redraw();
+                window_state.window.request_redraw();
             }
             _ => {}
         }
