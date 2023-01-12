@@ -21,6 +21,15 @@ pub mod util;
 
 pub use graph::*;
 
+pub async fn initialize_no_window(
+) -> anyhow::Result<(winit::event_loop::EventLoop<()>, State)> {
+    let event_loop = EventLoop::new();
+
+    let state = State::new().await?;
+
+    Ok((event_loop, state))
+}
+
 pub async fn initialize(
 ) -> anyhow::Result<(winit::event_loop::EventLoop<()>, State, WindowState)> {
     let event_loop = EventLoop::new();
@@ -62,6 +71,14 @@ pub struct State {
 }
 
 impl State {
+    pub fn new_window(
+        &self,
+        event_loop: &EventLoop<()>,
+    ) -> Result<WindowState> {
+        let window = WindowBuilder::new().build(event_loop).unwrap();
+        self.prepare_window(window)
+    }
+
     pub fn prepare_window(&self, window: Window) -> Result<WindowState> {
         let size = window.inner_size();
 
