@@ -945,13 +945,13 @@ impl Graph {
         Ok(true)
     }
 
-    pub fn execute<'a>(
+    pub fn execute_with_encoder<'a>(
         &mut self,
         state: &State,
         transient_res: &'a HashMap<String, InputResource<'a>>,
         graph_scalar_in: &'a rhai::Map,
-        // node_scalar_in: FxHashMap<NodeId, rhai::Map>,
-    ) -> Result<SubmissionIndex> {
+        encoder: &mut wgpu::CommandEncoder,
+    ) -> Result<()> {
         // iterate through all resources, allocating all `None` resources
         // that have filled out `resource_meta`s -- afterward, all
         // owned resources should be ready for use
@@ -1019,12 +1019,6 @@ impl Graph {
 
         // submit the commands to the GPU queue and return the submission index
 
-        let mut encoder = state.device.create_command_encoder(
-            &wgpu::CommandEncoderDescriptor {
-                label: Some("Render graph encoder"),
-            },
-        );
-
         for node_id in topo_order.iter() {
             let node = &self.nodes[node_id.0];
             let schema = &self.schemas[node.schema.0];
@@ -1033,13 +1027,25 @@ impl Graph {
                 continue;
             }
 
-            self.ops.execute_node(
-                &resource_ctx,
-                schema,
-                *node_id,
-                &mut encoder,
-            )?;
+            self.ops
+                .execute_node(&resource_ctx, schema, *node_id, encoder)?;
         }
+
+        Ok(())
+    }
+
+    pub fn execute<'a>(
+        &mut self,
+        state: &State,
+        transient_res: &'a HashMap<String, InputResource<'a>>,
+        graph_scalar_in: &'a rhai::Map,
+        // node_scalar_in: FxHashMap<NodeId, rhai::Map>,
+    ) -> Result<SubmissionIndex> {
+        let mut encoder = state.device.create_command_encoder(
+            &wgpu::CommandEncoderDescriptor {
+                label: Some("Render graph encoder"),
+            },
+        );
 
         let sub_ix = state.queue.submit(Some(encoder.finish()));
 
@@ -1656,7 +1662,9 @@ impl GraphOps {
                         );
                         pass.draw_indexed(indices, 0, instances);
                     } else {
-                        let vertices = if let Some(range) = op_state.vertices.clone() {
+                        let vertices = if let Some(range) =
+                            op_state.vertices.clone()
+                        {
                             range
                         } else {
                             let (_, size, stride) = vertex_buffers[0].1;
@@ -1792,10 +1800,8 @@ impl GraphOps {
         let vert = Arc::new(vert);
         let frag = Arc::new(frag);
 
-        let vert_inst = VertexShaderInstance::from_shader_single_buffer(
-            &vert,
-            step_mode,
-        );
+        let vert_inst =
+            VertexShaderInstance::from_shader_single_buffer(&vert, step_mode);
 
         let frag_inst =
             FragmentShaderInstance::from_shader(&frag, frag_out_formats)?;
