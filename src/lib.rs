@@ -120,7 +120,7 @@ impl State {
             .await
             .ok_or(anyhow::anyhow!("Could not find compatible adapter"))?;
 
-        // let available_features = adapter.features();
+        let allowed_limits = adapter.limits();
 
         let (device, queue) = adapter
             .request_device(
@@ -130,7 +130,8 @@ impl State {
                         wgpu::Limits::downlevel_webgl2_defaults()
                     } else {
                         wgpu::Limits {
-                            max_push_constant_size: 128,
+                            max_push_constant_size: allowed_limits
+                                .max_push_constant_size,
                             ..wgpu::Limits::default()
                         }
                     },
