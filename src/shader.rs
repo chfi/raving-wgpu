@@ -59,18 +59,16 @@ impl ComputeShader {
         shader_src: &str,
         entry_point: &str,
     ) -> Result<Self> {
-
         let label = format!("Compute shader");
         let shader_desc = ShaderModuleDescriptor {
             label: Some(label.as_str()),
             source: wgpu::ShaderSource::Wgsl(shader_src.into()),
         };
-        
+
         let naga_mod = naga::front::wgsl::parse_str(shader_src)?;
 
         let shader_module = state.device.create_shader_module(shader_desc);
 
-        
         log::error!("parsing group bindings");
         let group_bindings =
             GroupBindings::from_spirv(&naga_mod, wgpu::ShaderStages::COMPUTE)?;
@@ -263,6 +261,8 @@ pub fn format_naga_to_wgpu(format: naga::StorageFormat) -> wgpu::TextureFormat {
 
         naga::StorageFormat::R16Uint => wgpu::TextureFormat::R16Uint,
         naga::StorageFormat::R16Sint => wgpu::TextureFormat::R16Sint,
+        naga::StorageFormat::R16Unorm => wgpu::TextureFormat::R16Unorm,
+        naga::StorageFormat::R16Snorm => wgpu::TextureFormat::R16Snorm,
         naga::StorageFormat::R16Float => wgpu::TextureFormat::R16Float,
 
         naga::StorageFormat::Rg8Unorm => wgpu::TextureFormat::Rg8Unorm,
@@ -278,6 +278,8 @@ pub fn format_naga_to_wgpu(format: naga::StorageFormat) -> wgpu::TextureFormat {
         naga::StorageFormat::Rg16Uint => wgpu::TextureFormat::Rg16Uint,
         naga::StorageFormat::Rg16Sint => wgpu::TextureFormat::Rg16Sint,
         naga::StorageFormat::Rg16Float => wgpu::TextureFormat::Rg16Float,
+        naga::StorageFormat::Rg16Unorm => wgpu::TextureFormat::Rg16Unorm,
+        naga::StorageFormat::Rg16Snorm => wgpu::TextureFormat::Rg16Snorm,
 
         naga::StorageFormat::Rgba8Unorm => wgpu::TextureFormat::Rgba8Unorm,
         naga::StorageFormat::Rgba8Snorm => wgpu::TextureFormat::Rgba8Snorm,
@@ -293,6 +295,8 @@ pub fn format_naga_to_wgpu(format: naga::StorageFormat) -> wgpu::TextureFormat {
 
         naga::StorageFormat::Rgba16Uint => wgpu::TextureFormat::Rgba16Uint,
         naga::StorageFormat::Rgba16Sint => wgpu::TextureFormat::Rgba16Sint,
+        naga::StorageFormat::Rgba16Unorm => wgpu::TextureFormat::Rgba16Unorm,
+        naga::StorageFormat::Rgba16Snorm => wgpu::TextureFormat::Rgba16Snorm,
         naga::StorageFormat::Rgba16Float => wgpu::TextureFormat::Rgba16Float,
 
         naga::StorageFormat::Rgba32Uint => wgpu::TextureFormat::Rgba32Uint,

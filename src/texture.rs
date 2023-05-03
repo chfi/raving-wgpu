@@ -36,6 +36,7 @@ impl Texture {
             dimension: wgpu::TextureDimension::D2,
             format,
             usage,
+            view_formats: &[format],
         });
 
         let dimensions = [width as u32, height as u32];
@@ -44,14 +45,13 @@ impl Texture {
             label,
             format: Some(format),
             dimension: Some(wgpu::TextureViewDimension::D2),
-            ..wgpu::TextureViewDescriptor::default()
-            /*
-            aspect: todo!(),
-            base_mip_level: 1,
-            mip_level_count: 1,
-            base_array_layer: todo!(),
-            array_layer_count: todo!(),
-            */
+            ..wgpu::TextureViewDescriptor::default() /*
+                                                     aspect: todo!(),
+                                                     base_mip_level: 1,
+                                                     mip_level_count: 1,
+                                                     base_array_layer: todo!(),
+                                                     array_layer_count: todo!(),
+                                                     */
         };
 
         // let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -100,15 +100,18 @@ impl Texture {
             height: dimensions.1,
             depth_or_array_layers: 1,
         };
-        let usage = wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST;
+        let usage = wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_DST;
+        let format = wgpu::TextureFormat::Rgba8UnormSrgb;
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label,
             size,
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            format,
             usage,
+            view_formats: &[format],
         });
 
         let dimensions = [dimensions.0, dimensions.1];

@@ -6,18 +6,18 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-winit = "0.27"
+winit = "0.28"
 env_logger = "0.9"
 log = "0.4"
 
-egui = { version = "0.20" }
-egui-wgpu = { version = "0.20" }
-egui-winit = { version = "0.20" }
+egui = { version = "0.21" }
+egui-wgpu = { version = "0.21" }
+egui-winit = { version = "0.21" }
 
 lyon = "1.0"
 
-wgpu = { version = "0.14", features = ["spirv"] }
-naga = { version = "0.10", features = ["clone", "spv-in", "glsl-in", "spv-out"] }
+wgpu = { version = "0.15", features = ["spirv"] }
+naga = { version = "0.11", features = ["clone", "spv-in", "glsl-in", "spv-out"] }
 
 crossbeam = "0.8"
 parking_lot = "0.11.1"

@@ -82,9 +82,9 @@ impl State {
     pub fn prepare_window(&self, window: Window) -> Result<WindowState> {
         let size = window.inner_size();
 
-        let surface = unsafe { self.instance.create_surface(&window) };
+        let surface = unsafe { self.instance.create_surface(&window) }?;
 
-        let surface_format = surface.get_supported_formats(&self.adapter)[0];
+        let surface_format = surface.get_capabilities(&self.adapter).formats[0];
 
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT
@@ -94,6 +94,7 @@ impl State {
             height: size.height,
             present_mode: wgpu::PresentMode::Fifo,
             alpha_mode: wgpu::CompositeAlphaMode::Auto,
+            view_formats: vec![surface_format],
         };
 
         surface.configure(&self.device, &config);
@@ -110,7 +111,10 @@ impl State {
     }
 
     pub async fn new() -> Result<Self> {
-        let instance = wgpu::Instance::new(wgpu::Backends::all());
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::all(),
+            dx12_shader_compiler: Default::default(),
+        });
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::default(),
