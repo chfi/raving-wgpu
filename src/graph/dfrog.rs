@@ -247,8 +247,8 @@ impl ResourceRef {
                         format: format?,
 
                         texture: Some(&texture.texture),
-                        view: Some(&texture.view),
-                        sampler: Some(&texture.sampler),
+                        view: texture.view.as_ref(),
+                        sampler: texture.sampler.as_ref(),
                     }),
                     _ => None,
                 }

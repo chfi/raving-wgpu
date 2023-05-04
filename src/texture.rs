@@ -9,8 +9,8 @@ pub struct Texture {
     usage: wgpu::TextureUsages,
 
     pub texture: wgpu::Texture,
-    pub view: wgpu::TextureView,
-    pub sampler: wgpu::Sampler,
+    pub view: Option<wgpu::TextureView>,
+    pub sampler: Option<wgpu::Sampler>,
 }
 
 impl Texture {
@@ -55,16 +55,27 @@ impl Texture {
         };
 
         // let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let view = texture.create_view(&view_desc);
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        });
+
+        let copy_only =
+            wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC;
+
+        // don't create a view or sampler if this is just for copy (TODO: refine)
+        let (view, sampler) = if !usage.intersects(copy_only.complement()) {
+            (None, None)
+        } else {
+            let view = texture.create_view(&view_desc);
+            let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+                address_mode_u: wgpu::AddressMode::ClampToEdge,
+                address_mode_v: wgpu::AddressMode::ClampToEdge,
+                address_mode_w: wgpu::AddressMode::ClampToEdge,
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Nearest,
+                mipmap_filter: wgpu::FilterMode::Nearest,
+                ..Default::default()
+            });
+
+            (Some(view), Some(sampler))
+        };
 
         Ok(Self {
             dimensions,
@@ -148,8 +159,8 @@ impl Texture {
             usage,
 
             texture,
-            view,
-            sampler,
+            view: Some(view),
+            sampler: Some(sampler),
         })
     }
 }

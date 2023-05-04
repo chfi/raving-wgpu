@@ -72,12 +72,18 @@ impl GroupBindings {
                 },
                 crate::Resource::Texture { texture, .. } => match entry.ty {
                     BindingType::Sampler(_) => BindingResource::Sampler(
-                        &texture.as_ref().unwrap().sampler,
+                        texture
+                            .as_ref()
+                            .and_then(|t| t.sampler.as_ref())
+                            .unwrap(),
                     ),
                     BindingType::Texture { .. }
                     | BindingType::StorageTexture { .. } => {
                         BindingResource::TextureView(
-                            &texture.as_ref().unwrap().view,
+                            texture
+                                .as_ref()
+                                .and_then(|t| t.view.as_ref())
+                                .unwrap(),
                         )
                     }
                     BindingType::Buffer { .. } => {
@@ -177,7 +183,6 @@ impl GroupBindings {
 
         let mut expected_group = 0;
         for (group_ix, mut defs) in shader_bindings {
-
             defs.sort_by_key(|(def, space)| def.binding.binding);
             final_bindings.push(defs.clone());
 
@@ -324,7 +329,7 @@ impl GroupBindings {
                             } else {
                                 unreachable!();
                             };
-                        
+
                         let ty = wgpu::BindingType::Buffer {
                             ty: binding_ty,
                             has_dynamic_offset: false,
