@@ -4,7 +4,7 @@ use datafrog::Relation;
 use rustc_hash::{FxHashMap, FxHashSet};
 use wgpu::{
     BindingResource, BindingType, CommandEncoder, ComputePass, RenderPass,
-    SubmissionIndex, TextureUsages,
+    SubmissionIndex,
 };
 
 use std::sync::Arc;
@@ -640,7 +640,8 @@ impl Graph {
         vertex_step_mode: wgpu::VertexStepMode,
         vertex_slots: impl IntoIterator<Item = &'a str>,
         index_slot: Option<&str>,
-        frag_out_formats: &[wgpu::TextureFormat],
+        // frag_out_formats: &[wgpu::TextureFormat],
+        color_targets: &[wgpu::ColorTargetState],
     ) -> Result<NodeSchemaId> {
         let schema_id = NodeSchemaId(self.schemas.len());
         let schema = self.ops.create_graphics_schema(
@@ -651,7 +652,7 @@ impl Graph {
             vertex_step_mode,
             vertex_slots,
             index_slot,
-            frag_out_formats,
+            color_targets,
             schema_id,
         )?;
         self.schemas.push(schema);
@@ -668,7 +669,8 @@ impl Graph {
         vertex_step_mode: wgpu::VertexStepMode,
         vertex_slots: impl IntoIterator<Item = &'a str>,
         index_slot: Option<&str>,
-        frag_out_formats: &[wgpu::TextureFormat],
+        color_targets: &[wgpu::ColorTargetState],
+        // frag_out_formats: &[wgpu::TextureFormat],
     ) -> Result<NodeSchemaId> {
         let schema_id = NodeSchemaId(self.schemas.len());
         let schema = self.ops.create_graphics_schema(
@@ -679,7 +681,8 @@ impl Graph {
             vertex_step_mode,
             vertex_slots,
             index_slot,
-            frag_out_formats,
+            color_targets,
+            // frag_out_formats,
             schema_id,
         )?;
         self.schemas.push(schema);
@@ -1791,7 +1794,8 @@ impl GraphOps {
         step_mode: wgpu::VertexStepMode,
         vertex_slots: impl IntoIterator<Item = &'a str>,
         index_slot: Option<&str>,
-        frag_out_formats: &[wgpu::TextureFormat],
+        // frag_out_formats: &[wgpu::TextureFormat],
+        color_targets: &[wgpu::ColorTargetState],
         schema_id: NodeSchemaId,
     ) -> Result<NodeSchema> {
         let vert = VertexShader::from_spirv(&state, vert_src, "main")?;
@@ -1804,7 +1808,7 @@ impl GraphOps {
             VertexShaderInstance::from_shader_single_buffer(&vert, step_mode);
 
         let frag_inst =
-            FragmentShaderInstance::from_shader(&frag, frag_out_formats)?;
+            FragmentShaderInstance::from_shader(&frag, color_targets)?;
 
         let graphics = if let Some(primitive) = primitive {
             GraphicsPipeline::new_custom(

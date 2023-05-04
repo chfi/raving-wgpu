@@ -1,7 +1,7 @@
 use naga::{Expression, Handle, ScalarKind, VectorSize};
 use wgpu::*;
 
-use anyhow::{Result};
+use anyhow::Result;
 use std::sync::Arc;
 
 use crate::shader::interface::GroupBindings;
@@ -34,10 +34,6 @@ impl GraphicsPipeline {
     }
     */
 
-    pub fn create_bind_groups(&self, state: &crate::State) {
-        todo!();
-    }
-
     pub fn new_custom(
         state: &crate::State,
         vertex: VertexShaderInstance,
@@ -48,19 +44,13 @@ impl GraphicsPipeline {
         let vertex_buffers = vertex.create_buffer_layouts();
         let vertex_state = vertex.create_vertex_state(&vertex_buffers);
 
-        let mut color_targets = Vec::new();
+        let color_targets = fragment
+            .color_targets
+            .iter()
+            .map(|tgt| Some(tgt.clone()))
+            .collect::<Vec<_>>();
+
         let fragment_state = {
-            // TODO blend and write_mask should be configurable
-
-            for format in fragment.attachment_formats.iter() {
-                let state = wgpu::ColorTargetState {
-                    format: *format,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                };
-                color_targets.push(Some(state));
-            }
-
             let state = wgpu::FragmentState {
                 module: &fragment.shader.shader_module,
                 entry_point: fragment.shader.entry_point.name.as_str(),
@@ -241,7 +231,8 @@ impl VertexShaderInstance {
 pub struct FragmentShaderInstance {
     pub shader: Arc<FragmentShader>,
 
-    attachment_formats: Vec<wgpu::TextureFormat>,
+    // attachment_formats: Vec<wgpu::TextureFormat>,
+    color_targets: Vec<wgpu::ColorTargetState>,
     depth_format: Option<wgpu::TextureFormat>,
     // pub push_constants: Option<interface::PushConstants>,
 }
@@ -251,11 +242,12 @@ impl FragmentShaderInstance {
     // match the fragment shader outputs
     pub fn from_shader(
         shader: &Arc<FragmentShader>,
-        attch_formats: &[wgpu::TextureFormat],
+        // attch_formats: &[wgpu::TextureFormat],
+        color_targets: &[wgpu::ColorTargetState],
     ) -> Result<Self> {
         // let mut attchs = Vec::new();
 
-        let attchs = attch_formats.iter().copied().collect::<Vec<_>>();
+        // let attchs = attch_formats.iter().copied().collect::<Vec<_>>();
 
         /*
         for output in shader.fragment_outputs.iter() {
@@ -276,7 +268,7 @@ impl FragmentShaderInstance {
         let result = Self {
             shader: shader.clone(),
 
-            attachment_formats: attchs,
+            color_targets: color_targets.to_vec(),
             depth_format: None,
             // push_constants: shader.push_constants.clone(),
         };
