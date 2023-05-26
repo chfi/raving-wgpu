@@ -111,18 +111,18 @@ impl State {
     }
 
     pub async fn new() -> Result<Self> {
+        let backends = wgpu::util::backend_bits_from_env()
+            .unwrap_or(wgpu::Backends::all());
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::all(),
+            backends,
             dx12_shader_compiler: Default::default(),
         });
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::default(),
-                compatible_surface: None,
-                force_fallback_adapter: false,
-            })
-            .await
-            .ok_or(anyhow::anyhow!("Could not find compatible adapter"))?;
+
+        let adapter = wgpu::util::initialize_adapter_from_env_or_default(
+            &instance, backends, None,
+        )
+        .await
+        .ok_or(anyhow::anyhow!("Could not find compatible adapter"))?;
 
         let allowed_limits = adapter.limits();
 
