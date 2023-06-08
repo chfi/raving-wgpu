@@ -742,7 +742,7 @@ impl Graph {
     /// returns an ordering of the nodes the `terminus` node depends on,
     /// that can be used to initialize and execute the graph so that
     /// `terminus` can be evaluated
-    pub fn resolution_order(&self, terminus: NodeId) -> Vec<NodeId> {
+    fn resolution_order(&self, terminus: NodeId) -> Vec<NodeId> {
         let mut output = Vec::new();
 
         #[derive(Clone, Copy, PartialEq, Eq)]
@@ -784,7 +784,7 @@ impl Graph {
         output
     }
 
-    pub fn node_inputs_iter<'a>(
+    fn node_inputs_iter<'a>(
         &'a self,
         id: NodeId,
     ) -> impl Iterator<Item = (NodeId, &'a OutputName, &'a InputName)> {
@@ -796,7 +796,7 @@ impl Graph {
         })
     }
 
-    pub fn node_outputs_iter<'a>(
+    fn node_outputs_iter<'a>(
         &'a self,
         id: NodeId,
     ) -> impl Iterator<Item = (NodeId, &'a OutputName, &'a InputName)> {
@@ -810,7 +810,7 @@ impl Graph {
             })
     }
 
-    pub fn link_nodes(
+    fn link_nodes(
         &mut self,
         from: NodeId,
         from_output: &str,
@@ -1217,7 +1217,7 @@ pub fn create_buffer_node(
     node_id
 }
 
-pub fn create_image_node(
+fn create_image_node(
     graph: &mut Graph,
     format: TextureFormat,
     usage: TextureUsages,

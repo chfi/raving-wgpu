@@ -9,6 +9,8 @@ use winit::{
 
 use anyhow::Result;
 
+pub mod node;
+
 pub mod graph;
 pub mod shader;
 pub mod texture;
