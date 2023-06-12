@@ -308,6 +308,23 @@ pub struct NodeInterface {
     bind_groups: Vec<()>,
 }
 
+pub fn graphics_node<'a>(
+    shader_src: &str,
+    vert_entry: &str,
+    frag_entry: &str,
+
+    primitive: wgpu::PrimitiveState,
+    depth_stencil: Option<wgpu::DepthStencilState>,
+    multisample: wgpu::MultisampleState,
+
+    vertex_buffer_attrs: impl IntoIterator<Item = &'a [&'a str]>,
+    fragment_attchs: impl IntoIterator<
+        Item = &'a [(&'a str, wgpu::ColorTargetState)],
+    >,
+) -> Result<()> {
+    todo!();
+}
+
 pub fn graphics_node_interface(
     module: &naga::Module,
     vert_entry: &str,
