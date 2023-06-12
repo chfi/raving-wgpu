@@ -4,6 +4,8 @@ read shader source into naga module and wgpu shader module
 
 */
 
+use std::collections::{HashMap, HashSet};
+
 use anyhow::{Context, Result};
 use wgpu::ShaderLocation;
 
@@ -19,6 +21,118 @@ struct VertexInputs {
     attribute_types: Vec<naga::TypeInner>,
 }
 
+impl VertexInputs {
+    fn vertex_buffer_layouts<'a>(
+        &self,
+        // buffer_attributes: &'a [
+        buffer_attributes: impl IntoIterator<Item = &'a [&'a str]>,
+        // attributes: &HashMap<&str, &'a wgpu::Buffer>,
+    ) -> Result<Vec<Vec<wgpu::VertexAttribute>>> {
+        // ) -> Result<Vec<wgpu::VertexBufferLayout<'a>>> {
+
+        let mut remaining_names = self
+            .attribute_names
+            .iter()
+            .enumerate()
+            .map(|(l, n)| (n.as_str(), l as u32))
+            .collect::<HashMap<_, _>>();
+
+        let mut attribute_lists = Vec::new();
+
+        for buffer_attrs in buffer_attributes {
+            let mut list = Vec::new();
+
+            let mut offset = 0u64;
+
+            for &attr_name in buffer_attrs {
+                let location = remaining_names.remove(attr_name)
+                    .with_context(|| format!("Vertex attribute `{attr_name}` not found in shader"))?;
+
+                let ty = &self.attribute_types[location as usize];
+
+                let (kind, width, size) = match ty {
+                    naga::TypeInner::Scalar { kind, width } => {
+                        (*kind, *width, None)
+                    }
+                    naga::TypeInner::Vector { size, kind, width } => {
+                        (*kind, *width, Some(*size))
+                    }
+                    _ => unreachable!(),
+                };
+
+                let format = naga_type_vertex_format(kind, width, size)
+                    .with_context(|| {
+                        format!("Incompatible vertex attribute type: `{ty:?}`")
+                    })?;
+
+                list.push(wgpu::VertexAttribute {
+                    format,
+                    offset,
+                    shader_location: location,
+                });
+
+                offset += format.size();
+            }
+            attribute_lists.push(list);
+        }
+
+        if !remaining_names.is_empty() {
+            // TODO bail with error message containing remaining variable names
+        }
+
+        Ok(attribute_lists)
+    }
+}
+
+fn naga_type_vertex_format(
+    scalar_kind: naga::ScalarKind,
+    width: u8,
+    size: Option<naga::VectorSize>,
+) -> Option<wgpu::VertexFormat> {
+    use naga::VectorSize as Size;
+    use wgpu::VertexFormat as Format;
+
+    match scalar_kind {
+        naga::ScalarKind::Sint => {
+            if width == 4 {
+                match size {
+                    None => Some(Format::Sint32),
+                    Some(Size::Bi) => Some(Format::Sint32x2),
+                    Some(Size::Tri) => Some(Format::Sint32x3),
+                    Some(Size::Quad) => Some(Format::Sint32x4),
+                }
+            } else {
+                None
+            }
+        }
+        naga::ScalarKind::Uint => {
+            if width == 4 {
+                match size {
+                    None => Some(Format::Uint32),
+                    Some(Size::Bi) => Some(Format::Uint32x2),
+                    Some(Size::Tri) => Some(Format::Uint32x3),
+                    Some(Size::Quad) => Some(Format::Uint32x4),
+                }
+            } else {
+                None
+            }
+        }
+        naga::ScalarKind::Float => {
+            if width == 4 {
+                match size {
+                    None => Some(Format::Float32),
+                    Some(Size::Bi) => Some(Format::Float32x2),
+                    Some(Size::Tri) => Some(Format::Float32x3),
+                    Some(Size::Quad) => Some(Format::Float32x4),
+                }
+            } else {
+                None
+            }
+        }
+        naga::ScalarKind::Bool => None,
+    }
+}
+
 fn binding_location(binding: &naga::Binding) -> Option<ShaderLocation> {
     match binding {
         naga::Binding::BuiltIn(_) => None,
@@ -26,11 +140,18 @@ fn binding_location(binding: &naga::Binding) -> Option<ShaderLocation> {
     }
 }
 
+fn vector_size_u64(size: naga::VectorSize) -> u64 {
+    match size {
+        naga::VectorSize::Bi => 2,
+        naga::VectorSize::Tri => 3,
+        naga::VectorSize::Quad => 4,
+    }
+}
+
 fn valid_vertex_attribute_type(ty: &naga::TypeInner) -> bool {
     match ty {
         naga::TypeInner::Scalar { .. } => true,
         naga::TypeInner::Vector { .. } => true,
-        naga::TypeInner::Matrix { .. } => true,
         _ => false,
     }
 }
