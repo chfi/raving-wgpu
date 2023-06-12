@@ -21,6 +21,11 @@ struct VertexInputs {
     attribute_types: Vec<naga::TypeInner>,
 }
 
+struct FragmentOutputs {
+    attch_names: Vec<String>,
+    attch_types: Vec<naga::TypeInner>,
+}
+
 impl VertexInputs {
     fn vertex_buffer_layouts<'a>(
         &self,
@@ -133,6 +138,72 @@ fn naga_type_vertex_format(
     }
 }
 
+fn naga_type_texture_format_valid(
+    scalar_kind: naga::ScalarKind,
+    width: u8,
+    size: Option<naga::VectorSize>,
+    format: wgpu::TextureFormat,
+) -> bool {
+    use naga::ScalarKind as Kind;
+    use naga::VectorSize as Size;
+    use wgpu::TextureFormat as Format;
+
+    let size = size.map(vector_size_u64).unwrap_or(1);
+
+    match format {
+        Format::R8Unorm | Format::R8Snorm => {
+            matches!(scalar_kind, Kind::Float) && size == 1
+        }
+        Format::R8Uint => matches!(scalar_kind, Kind::Uint) && size == 1,
+        Format::R8Sint => matches!(scalar_kind, Kind::Sint) && size == 1,
+        Format::R16Uint => matches!(scalar_kind, Kind::Uint) && size == 1,
+        Format::R16Sint => matches!(scalar_kind, Kind::Sint) && size == 1,
+        Format::R16Unorm | Format::R16Snorm | Format::R16Float => {
+            matches!(scalar_kind, Kind::Float) && size == 1
+        }
+        Format::Rg8Unorm | Format::Rg8Snorm => {
+            matches!(scalar_kind, Kind::Float) && size == 2
+        }
+        Format::Rg8Uint | Format::Rg16Uint => {
+            matches!(scalar_kind, Kind::Uint) && size == 2
+        }
+        Format::Rg8Sint | Format::Rg16Sint => {
+            matches!(scalar_kind, Kind::Sint) && size == 2
+        }
+        Format::R32Uint => matches!(scalar_kind, Kind::Uint) && size == 1,
+        Format::R32Sint => matches!(scalar_kind, Kind::Sint) && size == 1,
+        Format::R32Float => matches!(scalar_kind, Kind::Float) && size == 1,
+        Format::Rg16Float
+        | Format::Rg16Unorm
+        | Format::Rg16Snorm
+        | Format::Rg32Float => {
+            //
+            matches!(scalar_kind, Kind::Float) && size == 2
+        }
+        Format::Rgba8Unorm
+        | Format::Rgba8UnormSrgb
+        | Format::Rgba8Snorm
+        | Format::Bgra8Unorm
+        | Format::Bgra8UnormSrgb
+        | Format::Rgba16Unorm
+        | Format::Rgba16Snorm
+        | Format::Rgba16Float
+        | Format::Rgba32Float => {
+            //
+            matches!(scalar_kind, Kind::Float) && size == 4
+        }
+        Format::Rgba8Uint | Format::Rgba16Uint | Format::Rgba32Uint => {
+            matches!(scalar_kind, Kind::Uint) && size == 4
+        }
+        Format::Rgba8Sint | Format::Rgba16Sint | Format::Rgba32Sint => {
+            matches!(scalar_kind, Kind::Sint) && size == 4
+        }
+        Format::Rg32Uint => matches!(scalar_kind, Kind::Uint) && size == 2,
+        Format::Rg32Sint => matches!(scalar_kind, Kind::Sint) && size == 2,
+        _ => false,
+    }
+}
+
 fn binding_location(binding: &naga::Binding) -> Option<ShaderLocation> {
     match binding {
         naga::Binding::BuiltIn(_) => None,
@@ -148,10 +219,10 @@ fn vector_size_u64(size: naga::VectorSize) -> u64 {
     }
 }
 
-fn valid_vertex_attribute_type(ty: &naga::TypeInner) -> bool {
+fn valid_shader_io_type(ty: &naga::TypeInner) -> bool {
     match ty {
-        naga::TypeInner::Scalar { .. } => true,
-        naga::TypeInner::Vector { .. } => true,
+        naga::TypeInner::Scalar { kind, .. } => kind.is_numeric(),
+        naga::TypeInner::Vector { kind, .. } => kind.is_numeric(),
         _ => false,
     }
 }
@@ -171,7 +242,7 @@ fn module_vertex_inputs(
         let ty = module.types.get_handle(arg.ty)?;
 
         if let Some((location, name)) = location.zip(name) {
-            if !valid_vertex_attribute_type(&ty.inner) {
+            if !valid_shader_io_type(&ty.inner) {
                 anyhow::bail!(
                     "Unsupported vertex attribute type: {:?}",
                     ty.inner
@@ -193,11 +264,48 @@ fn module_vertex_inputs(
     })
 }
 
-pub struct NodeInterface {
-    vert_inputs: Vec<()>,
-    frag_outputs: Vec<()>,
+fn module_fragment_outputs(
+    module: &naga::Module,
+    entry_point: &str,
+) -> Result<FragmentOutputs> {
+    let entry_point = module_entry_point(&module, entry_point)?;
 
-    bindings: Vec<()>,
+    let mut args: Vec<(u32, String, naga::TypeInner)> = Vec::new();
+
+    for arg in entry_point.function.arguments.iter() {
+        let location = arg.binding.as_ref().and_then(binding_location);
+        let name = arg.name.as_ref();
+
+        let ty = module.types.get_handle(arg.ty)?;
+
+        if let Some((location, name)) = location.zip(name) {
+            if !valid_shader_io_type(&ty.inner) {
+                anyhow::bail!(
+                    "Unsupported fragment attachment type: {:?}",
+                    ty.inner
+                );
+            }
+
+            args.push((location, name.to_string(), ty.inner.clone()));
+        }
+    }
+
+    args.sort_by_key(|(loc, _, _)| *loc);
+
+    let (names, types) =
+        args.into_iter().map(|(_loc, name, ty)| (name, ty)).unzip();
+
+    Ok(FragmentOutputs {
+        attch_names: names,
+        attch_types: types,
+    })
+}
+
+pub struct NodeInterface {
+    vert_inputs: VertexInputs,
+    frag_outputs: FragmentOutputs,
+
+    bind_groups: Vec<()>,
 }
 
 pub fn graphics_node_interface(
