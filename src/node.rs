@@ -4,7 +4,7 @@ read shader source into naga module and wgpu shader module
 
 */
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use anyhow::{Context, Result};
 use wgpu::ShaderLocation;
@@ -24,6 +24,11 @@ struct VertexInputs {
 struct FragmentOutputs {
     attch_names: Vec<String>,
     attch_types: Vec<naga::TypeInner>,
+}
+
+struct BindGroups {
+    // string -> (group id, bind group entry)
+    bindings: BTreeMap<String, (u32, wgpu::BindGroupLayoutEntry)>,
 }
 
 impl VertexInputs {
@@ -301,11 +306,210 @@ fn module_fragment_outputs(
     })
 }
 
+fn naga_global_bind_group_entry(
+    module: &naga::Module,
+    var: &naga::GlobalVariable,
+) -> Result<Option<(String, u32, wgpu::BindGroupLayoutEntry)>> {
+    // let binding = var.binding.as_ref();
+    // let name = var.name.as_ref();
+
+    let space = match var.space {
+        naga::AddressSpace::Uniform
+        | naga::AddressSpace::Storage { .. }
+        | naga::AddressSpace::Handle => var.space,
+        // naga::AddressSpace::Storage { access } => todo!(),
+        // naga::AddressSpace::Handle => todo!(),
+        _ => return Ok(None),
+    };
+
+    let binding = var.binding.as_ref();
+    let name = var.name.as_ref();
+
+    let Some((binding, name)) = binding.zip(name)
+    else {
+        return Ok(None);
+    };
+
+    let var_ty = module.types.get_handle(var.ty)?;
+
+    // let (binding_ty, binding_count) = match &var_ty.inner {
+    let binding_ty = match &var_ty.inner {
+        naga::TypeInner::Scalar { .. }
+        | naga::TypeInner::Vector { .. }
+        | naga::TypeInner::Matrix { .. }
+        | naga::TypeInner::Struct { .. } => {
+            let buffer_ty = match space {
+                naga::AddressSpace::Uniform => wgpu::BufferBindingType::Uniform,
+                naga::AddressSpace::Storage { access } => {
+                    let read_only =
+                        !access.contains(naga::StorageAccess::STORE);
+                    wgpu::BufferBindingType::Storage { read_only }
+                }
+                _ => anyhow::bail!("Incompatible address space for binding"),
+            };
+
+            // TODO: actually take the sizes into account (need
+            // separate match arms probably) and set the
+            // min_binding_size field
+            let ty = wgpu::BindingType::Buffer {
+                ty: buffer_ty,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            };
+
+            ty
+        }
+        // naga::TypeInner::Atomic { kind, width } => {
+        //     todo!()
+        // }
+        naga::TypeInner::Array { base, size, stride } => {
+            let buffer_ty = match space {
+                naga::AddressSpace::Uniform => wgpu::BufferBindingType::Uniform,
+                naga::AddressSpace::Storage { access } => {
+                    let read_only =
+                        !access.contains(naga::StorageAccess::STORE);
+                    wgpu::BufferBindingType::Storage { read_only }
+                }
+                _ => anyhow::bail!("Incompatible address space for binding"),
+            };
+
+            let ty = wgpu::BindingType::Buffer {
+                ty: buffer_ty,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            };
+
+            ty
+        }
+        naga::TypeInner::Image {
+            dim,
+            arrayed,
+            class,
+        } => {
+            use naga::ImageDimension as ImgDim;
+            use wgpu::TextureViewDimension as TvDim;
+
+            let view_dimension = match (*arrayed, dim) {
+                (false, ImgDim::D1) => TvDim::D1,
+                (false, ImgDim::D2) => TvDim::D2,
+                (false, ImgDim::D3) => TvDim::D3,
+                (false, ImgDim::Cube) => TvDim::Cube,
+                // not supporting arrayed textures yet
+                // (true, ImgDim::D2) => TvDim::D2Array,
+                // (true, ImgDim::Cube) => TvDim::CubeArray,
+                _ => panic!("Unsupported image array/dimension combination"),
+            };
+
+            let ty = match class {
+                naga::ImageClass::Sampled { kind, multi } => {
+                    let sample_type = match kind {
+                        naga::ScalarKind::Sint => wgpu::TextureSampleType::Sint,
+                        naga::ScalarKind::Uint => wgpu::TextureSampleType::Uint,
+                        naga::ScalarKind::Float => {
+                            wgpu::TextureSampleType::Float { filterable: true }
+                        }
+                        _ => unimplemented!(),
+                    };
+
+                    wgpu::BindingType::Texture {
+                        sample_type,
+                        view_dimension,
+                        multisampled: *multi,
+                    }
+                }
+                naga::ImageClass::Depth { multi } => {
+                    let sample_type = wgpu::TextureSampleType::Depth;
+
+                    wgpu::BindingType::Texture {
+                        sample_type,
+                        view_dimension,
+                        multisampled: *multi,
+                    }
+                }
+                naga::ImageClass::Storage { format, access } => {
+                    let read = access.contains(naga::StorageAccess::LOAD);
+                    let write = access.contains(naga::StorageAccess::STORE);
+
+                    let input_format = format;
+                    let format =
+                        crate::util::format_naga_to_wgpu(format.clone());
+
+                    use wgpu::StorageTextureAccess as Access;
+
+                    let access = match (read, write) {
+                        (false, false) => unreachable!(),
+                        (true, false) => Access::ReadOnly,
+                        (false, true) => Access::WriteOnly,
+                        (true, true) => Access::ReadWrite,
+                    };
+
+                    wgpu::BindingType::StorageTexture {
+                        access,
+                        format,
+                        view_dimension,
+                    }
+                }
+            };
+
+            ty
+        }
+        naga::TypeInner::Sampler { comparison } => {
+            let binding_type = if *comparison {
+                wgpu::SamplerBindingType::Comparison
+            } else {
+                wgpu::SamplerBindingType::Filtering
+            };
+
+            wgpu::BindingType::Sampler(binding_type)
+        }
+        naga::TypeInner::BindingArray { base, size } => todo!(),
+        _ => anyhow::bail!("Unsupported binding type `{:?}`", var_ty.inner),
+    };
+
+    let group = binding.group;
+
+    // NB: this one doesn't set shader stage visibility, must be done by the caller
+    let mut entry = wgpu::BindGroupLayoutEntry {
+        binding: binding.binding,
+        visibility: wgpu::ShaderStages::empty(),
+        ty: binding_ty,
+        count: None,
+    };
+
+    Ok(Some((name.to_string(), group, entry)))
+}
+
+fn module_bind_groups(module: &naga::Module) -> Result<BindGroups> {
+    let mut bindings: BTreeMap<String, (u32, wgpu::BindGroupLayoutEntry)> =
+        BTreeMap::default();
+
+    for (_h, var) in module.global_variables.iter() {
+        // get binding (must be Some)
+        let binding = var.binding.as_ref();
+        let name = var.name.as_ref();
+
+        match naga_global_bind_group_entry(module, var)? {
+            None => continue,
+            Some((name, group, entry)) => {
+                bindings.insert(name, (group, entry));
+            }
+        }
+    }
+
+    Ok(BindGroups { bindings })
+}
+
 pub struct NodeInterface {
     vert_inputs: VertexInputs,
     frag_outputs: FragmentOutputs,
 
     bind_groups: Vec<()>,
+}
+
+pub struct GraphicsNode {
+    shader_module: wgpu::ShaderModule,
+    // vert_entry: &str,
+    // frag_entry: &str,
 }
 
 pub fn graphics_node<'a>(
