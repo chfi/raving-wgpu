@@ -33,6 +33,53 @@ struct BindGroups {
     layouts: Vec<wgpu::BindGroupLayout>,
 }
 
+impl BindGroups {
+    fn create_bind_groups(
+        &self,
+        device: &wgpu::Device,
+        resources: &HashMap<String, wgpu::BindingResource<'_>>,
+    ) -> Result<Vec<wgpu::BindGroup>> {
+        let mut group_entries: BTreeMap<u32, Vec<wgpu::BindGroupEntry>> =
+            BTreeMap::new();
+        // iter through resources, map to group, sort by binding
+
+        for (name, (group, layout_entry)) in &self.bindings {
+            let resource = resources
+                .get(name)
+                .with_context(|| format!("Missing resource `{name}`"))?
+                .clone();
+
+            let entry = wgpu::BindGroupEntry {
+                binding: layout_entry.binding,
+                resource,
+            };
+
+            group_entries.entry(*group).or_default().push(entry);
+        }
+
+        group_entries
+            .values_mut()
+            .for_each(|es| es.sort_by_key(|e| e.binding));
+
+        let mut groups = Vec::new();
+
+        for (group, entries) in group_entries {
+            let layout = &self.layouts[group as usize];
+
+            let bind_group =
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: None,
+                    layout,
+                    entries: entries.as_slice(),
+                });
+
+            groups.push(bind_group);
+        }
+
+        Ok(groups)
+    }
+}
+
 impl VertexInputs {
     fn array_stride(&self, attrs: &[&str]) -> u64 {
         let mut stride = 0;
