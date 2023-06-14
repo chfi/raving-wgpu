@@ -256,8 +256,9 @@ impl GroupBindings {
                                     access.contains(naga::StorageAccess::STORE);
 
                                 let input_format = format;
-                                let format =
-                                    super::format_naga_to_wgpu(format.clone());
+                                let format = crate::util::format_naga_to_wgpu(
+                                    format.clone(),
+                                );
 
                                 log::error!(
                                     "{:?} -> {:?}\t{read}, {write}",

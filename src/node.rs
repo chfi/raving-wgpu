@@ -29,15 +29,44 @@ struct FragmentOutputs {
 struct BindGroups {
     // string -> (group id, bind group entry)
     bindings: BTreeMap<String, (u32, wgpu::BindGroupLayoutEntry)>,
+
+    layouts: Vec<wgpu::BindGroupLayout>,
 }
 
 impl VertexInputs {
+    fn array_stride(&self, attrs: &[&str]) -> u64 {
+        let mut stride = 0;
+
+        for name in attrs {
+            let (ix, _) = self
+                .attribute_names
+                .iter()
+                .enumerate()
+                .find(|(_, n)| n == name)
+                .unwrap();
+
+            let ty = &self.attribute_types[ix];
+
+            let size = match ty {
+                naga::TypeInner::Scalar { width, .. } => *width as u64,
+                naga::TypeInner::Vector { width, size, .. } => {
+                    *size as u64 * *width as u64
+                }
+                _ => panic!("unsupported vertex attribute type"),
+            };
+
+            stride += size;
+        }
+
+        stride
+    }
+
     fn vertex_buffer_layouts<'a>(
         &self,
         // buffer_attributes: &'a [
         buffer_attributes: impl IntoIterator<Item = &'a [&'a str]>,
         // attributes: &HashMap<&str, &'a wgpu::Buffer>,
-    ) -> Result<Vec<Vec<wgpu::VertexAttribute>>> {
+    ) -> Result<Vec<(u64, Vec<wgpu::VertexAttribute>)>> {
         // ) -> Result<Vec<wgpu::VertexBufferLayout<'a>>> {
 
         let mut remaining_names = self
@@ -83,7 +112,9 @@ impl VertexInputs {
 
                 offset += format.size();
             }
-            attribute_lists.push(list);
+
+            let stride = offset;
+            attribute_lists.push((stride, list));
         }
 
         if !remaining_names.is_empty() {
@@ -153,7 +184,7 @@ fn naga_type_texture_format_valid(
     use naga::VectorSize as Size;
     use wgpu::TextureFormat as Format;
 
-    let size = size.map(vector_size_u64).unwrap_or(1);
+    let size = size.map(|s| s as u32).unwrap_or(1);
 
     match format {
         Format::R8Unorm | Format::R8Snorm => {
@@ -213,14 +244,6 @@ fn binding_location(binding: &naga::Binding) -> Option<ShaderLocation> {
     match binding {
         naga::Binding::BuiltIn(_) => None,
         naga::Binding::Location { location, .. } => Some(*location),
-    }
-}
-
-fn vector_size_u64(size: naga::VectorSize) -> u64 {
-    match size {
-        naga::VectorSize::Bi => 2,
-        naga::VectorSize::Tri => 3,
-        naga::VectorSize::Quad => 4,
     }
 }
 
@@ -479,7 +502,10 @@ fn naga_global_bind_group_entry(
     Ok(Some((name.to_string(), group, entry)))
 }
 
-fn module_bind_groups(module: &naga::Module) -> Result<BindGroups> {
+fn module_bind_groups(
+    device: &wgpu::Device,
+    module: &naga::Module,
+) -> Result<BindGroups> {
     let mut bindings: BTreeMap<String, (u32, wgpu::BindGroupLayoutEntry)> =
         BTreeMap::default();
 
@@ -496,23 +522,79 @@ fn module_bind_groups(module: &naga::Module) -> Result<BindGroups> {
         }
     }
 
-    Ok(BindGroups { bindings })
+    let mut sorted_bindings = bindings.values().collect::<Vec<_>>();
+
+    sorted_bindings.sort_by_key(|(group, _)| *group);
+
+    let mut bind_group_layouts: Vec<wgpu::BindGroupLayout> = Vec::new();
+
+    let mut prev_group = None;
+
+    let mut entries = Vec::new();
+
+    for (group, entry) in sorted_bindings {
+        if prev_group.is_some_and(|p| p != group) {
+            let desc = wgpu::BindGroupLayoutDescriptor {
+                label: None,
+                entries: &entries,
+            };
+
+            let layout = device.create_bind_group_layout(&desc);
+            bind_group_layouts.push(layout);
+
+            entries.clear();
+        }
+
+        entries.push(entry.clone());
+
+        prev_group = Some(group);
+    }
+
+    Ok(BindGroups {
+        bindings,
+        layouts: bind_group_layouts,
+    })
 }
 
 pub struct NodeInterface {
     vert_inputs: VertexInputs,
     frag_outputs: FragmentOutputs,
 
-    bind_groups: Vec<()>,
+    bind_groups: BindGroups,
+}
+
+impl NodeInterface {
+    fn graphics(
+        device: &wgpu::Device,
+        module: &naga::Module,
+        vert_entry: &str,
+        frag_entry: &str,
+    ) -> Result<Self> {
+        let vert_inputs = module_vertex_inputs(module, vert_entry)?;
+        let frag_outputs = module_fragment_outputs(module, frag_entry)?;
+
+        let mut bind_groups = module_bind_groups(device, module)?;
+
+        bind_groups.bindings.values_mut().for_each(|(_, entry)| {
+            entry.visibility |= wgpu::ShaderStages::VERTEX_FRAGMENT
+        });
+
+        Ok(Self {
+            vert_inputs,
+            frag_outputs,
+            bind_groups,
+        })
+    }
 }
 
 pub struct GraphicsNode {
-    shader_module: wgpu::ShaderModule,
-    // vert_entry: &str,
-    // frag_entry: &str,
+    interface: NodeInterface,
+    pipeline: wgpu::RenderPipeline,
 }
 
 pub fn graphics_node<'a>(
+    device: &wgpu::Device,
+
     shader_src: &str,
     vert_entry: &str,
     frag_entry: &str,
@@ -522,65 +604,111 @@ pub fn graphics_node<'a>(
     multisample: wgpu::MultisampleState,
 
     vertex_buffer_attrs: impl IntoIterator<Item = &'a [&'a str]>,
-    fragment_attchs: impl IntoIterator<
-        Item = &'a [(&'a str, wgpu::ColorTargetState)],
-    >,
-) -> Result<()> {
-    todo!();
-}
+    fragment_attchs: impl IntoIterator<Item = (&'a str, wgpu::ColorTargetState)>,
+) -> Result<GraphicsNode> {
+    let naga_module = naga::front::wgsl::parse_str(shader_src)?;
 
-pub fn graphics_node_interface(
-    module: &naga::Module,
-    vert_entry: &str,
-    frag_entry: &str,
-) -> Result<NodeInterface> {
-    let vert_entry_point = module_entry_point(&module, vert_entry)?;
+    let interface =
+        NodeInterface::graphics(device, &naga_module, vert_entry, frag_entry)?;
 
-    // let vert_inputs: Vec<()> = vert_entry_point
-    // let vert_inputs = vert_entry_point
-    //     .function
-    //     .arguments
-    //     .iter()
-    //     .filter_map(|arg| Some(arg.ty))
-    //     .collect::<Vec<_>>();
+    let pipeline_layout = {
+        let layout_refs =
+            interface.bind_groups.layouts.iter().collect::<Vec<_>>();
 
-    // for h in &vert_inputs {
+        if layout_refs.is_empty() {
+            None
+        } else {
+            let desc = wgpu::PipelineLayoutDescriptor {
+                label: None,
+                bind_group_layouts: layout_refs.as_slice(),
+                push_constant_ranges: &[],
+            };
 
-    let args = vert_entry_point.function.arguments.iter();
-
-    for arg in args {
-        println!("  -- {arg:#?}");
-        if let Some(binding) = arg.binding.as_ref() {
-            match binding {
-                naga::Binding::BuiltIn(b) => print!(" [builtin {b:?}"),
-                naga::Binding::Location {
-                    location,
-                    interpolation,
-                    sampling,
-                } => print!(" [loc({location})]"),
-            }
+            Some(device.create_pipeline_layout(&desc))
         }
-        let ty_h = arg.ty;
-        let ty = module.types.get_handle(ty_h)?;
-        let ty = ty.inner.clone();
-
-        println!("  {ty_h:?} -> {ty:?}");
-    }
-
-    // println!("vert inputs: {vert_inputs:#?}");
-
-    let frag_entry_point = module_entry_point(&module, frag_entry)?;
-
-    let frag_outputs = {
-        let result = frag_entry_point.function.result.as_ref();
-        println!("result: {:#?}", result);
-        let output_type =
-            result.and_then(|r| module.types.get_handle(r.ty).ok());
-
-        println!("output type: {output_type:#?}");
     };
 
-    todo!();
+    // TODO need to pass some more metadata (shader source path/file name) for the labels
+    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: None,
+        source: wgpu::ShaderSource::Wgsl(shader_src.into()),
+    });
+
+    // let vertex_buffers: Vec<wgpu::VertexBufferLayout> = Vec::new();
+
+    let vertex_attributes = interface
+        .vert_inputs
+        .vertex_buffer_layouts(vertex_buffer_attrs)?;
+
+    let vertex_buffers = {
+        let mut bufs = Vec::new();
+
+        for (stride, attributes) in &vertex_attributes {
+            // let stride = interface.vert_inputs.array_stride(attrs);
+
+            let layout = wgpu::VertexBufferLayout {
+                array_stride: *stride,
+                step_mode: wgpu::VertexStepMode::Vertex, // TODO this must be configurable
+                attributes,
+            };
+
+            bufs.push(layout);
+        }
+
+        bufs
+    };
+
+    let vertex_state = wgpu::VertexState {
+        module: &module,
+        entry_point: vert_entry,
+        buffers: &vertex_buffers,
+    };
+
+    let color_targets = {
+        let mut tgts: Vec<(u32, wgpu::ColorTargetState)> = fragment_attchs
+            .into_iter()
+            .map(|(name, tgt)| {
+                let (loc, _) = interface
+                    .frag_outputs
+                    .attch_names
+                    .iter()
+                    .enumerate()
+                    .find(|(_, n)| *n == name)
+                    .unwrap();
+
+                (loc as u32, tgt)
+            })
+            .collect::<Vec<_>>();
+
+        tgts.sort_by_key(|(loc, _)| *loc);
+
+        tgts.into_iter()
+            .map(|(_, tgt)| Some(tgt))
+            .collect::<Vec<_>>()
+    };
+
+    let fragment_state = wgpu::FragmentState {
+        module: &module,
+        entry_point: frag_entry,
+        targets: &color_targets,
+    };
+
+    let pipeline =
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: None,
+            layout: pipeline_layout.as_ref(),
+            vertex: vertex_state,
+            primitive,
+            depth_stencil,
+            multisample,
+            fragment: Some(fragment_state),
+            multiview: None,
+        });
+
+    Ok(GraphicsNode {
+        interface,
+        pipeline,
+    })
 }
 
 fn module_entry_point<'a>(
@@ -607,6 +735,7 @@ pub mod compute {
     //
 }
 
+/*
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -625,9 +754,10 @@ mod tests {
         println!("//////////////////////");
 
         let interface =
-            graphics_node_interface(&naga_mod, "vs_main", "fs_main")?;
+            NodeInterface::graphics(&naga_mod, "vs_main", "fs_main")?;
 
         // todo!();
         Ok(())
     }
 }
+*/
