@@ -34,7 +34,7 @@ struct BindGroups {
 }
 
 impl BindGroups {
-    fn create_bind_groups(
+    pub fn create_bind_groups(
         &self,
         device: &wgpu::Device,
         resources: &HashMap<String, wgpu::BindingResource<'_>>,
@@ -111,9 +111,12 @@ impl VertexInputs {
     fn vertex_buffer_layouts<'a>(
         &self,
         // buffer_attributes: &'a [
-        buffer_attributes: impl IntoIterator<Item = &'a [&'a str]>,
+        buffer_attributes: impl IntoIterator<
+            Item = (&'a [&'a str], wgpu::VertexStepMode),
+        >,
         // attributes: &HashMap<&str, &'a wgpu::Buffer>,
-    ) -> Result<Vec<(u64, Vec<wgpu::VertexAttribute>)>> {
+    ) -> Result<Vec<(u64, Vec<wgpu::VertexAttribute>, wgpu::VertexStepMode)>>
+    {
         // ) -> Result<Vec<wgpu::VertexBufferLayout<'a>>> {
 
         let mut remaining_names = self
@@ -125,7 +128,7 @@ impl VertexInputs {
 
         let mut attribute_lists = Vec::new();
 
-        for buffer_attrs in buffer_attributes {
+        for (buffer_attrs, step_mode) in buffer_attributes {
             let mut list = Vec::new();
 
             let mut offset = 0u64;
@@ -161,7 +164,7 @@ impl VertexInputs {
             }
 
             let stride = offset;
-            attribute_lists.push((stride, list));
+            attribute_lists.push((stride, list, step_mode));
         }
 
         if !remaining_names.is_empty() {
@@ -635,8 +638,8 @@ impl NodeInterface {
 }
 
 pub struct GraphicsNode {
-    interface: NodeInterface,
-    pipeline: wgpu::RenderPipeline,
+    pub interface: NodeInterface,
+    pub pipeline: wgpu::RenderPipeline,
 }
 
 pub fn graphics_node<'a>(
@@ -650,7 +653,9 @@ pub fn graphics_node<'a>(
     depth_stencil: Option<wgpu::DepthStencilState>,
     multisample: wgpu::MultisampleState,
 
-    vertex_buffer_attrs: impl IntoIterator<Item = &'a [&'a str]>,
+    vertex_buffer_attrs: impl IntoIterator<
+        Item = (&'a [&'a str], wgpu::VertexStepMode),
+    >,
     fragment_attchs: impl IntoIterator<Item = (&'a str, wgpu::ColorTargetState)>,
 ) -> Result<GraphicsNode> {
     let naga_module = naga::front::wgsl::parse_str(shader_src)?;
@@ -690,12 +695,12 @@ pub fn graphics_node<'a>(
     let vertex_buffers = {
         let mut bufs = Vec::new();
 
-        for (stride, attributes) in &vertex_attributes {
+        for (stride, attributes, step_mode) in &vertex_attributes {
             // let stride = interface.vert_inputs.array_stride(attrs);
 
             let layout = wgpu::VertexBufferLayout {
                 array_stride: *stride,
-                step_mode: wgpu::VertexStepMode::Vertex, // TODO this must be configurable
+                step_mode: *step_mode,
                 attributes,
             };
 
