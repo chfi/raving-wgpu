@@ -635,6 +635,14 @@ impl NodeInterface {
             bind_groups,
         })
     }
+
+    pub fn create_bind_groups(
+        &self,
+        device: &wgpu::Device,
+        resources: &HashMap<String, wgpu::BindingResource<'_>>,
+    ) -> Result<Vec<wgpu::BindGroup>> {
+        self.bind_groups.create_bind_groups(device, resources)
+    }
 }
 
 pub struct GraphicsNode {

@@ -14,7 +14,7 @@ pub struct EguiCtx {
     ctx: egui::Context,
 
     winit_state: egui_winit::State,
-    renderer: egui_wgpu::Renderer,
+    pub renderer: egui_wgpu::Renderer,
 
     clipped_primitives: Vec<ClippedPrimitive>,
     textures_delta: TexturesDelta,
