@@ -16,7 +16,6 @@ pub struct Texture {
 impl Texture {
     pub fn new(
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
         width: usize,
         height: usize,
         format: wgpu::TextureFormat,

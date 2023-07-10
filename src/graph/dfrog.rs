@@ -410,7 +410,6 @@ impl ResourceMeta {
 
                 let texture = crate::texture::Texture::new(
                     &state.device,
-                    &state.queue,
                     width as usize,
                     height as usize,
                     format,
