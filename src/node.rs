@@ -636,6 +636,37 @@ impl NodeInterface {
         })
     }
 
+    pub fn render_pass<'pass>(
+        &self,
+        attachments: &[(
+            &'pass wgpu::TextureView,
+            wgpu::Operations<wgpu::Color>,
+        )],
+        encoder: &'pass mut wgpu::CommandEncoder,
+    ) -> Result<wgpu::RenderPass<'pass>> {
+        let attchs = attachments
+            .into_iter()
+            .map(|(view, ops)| {
+                //
+                Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    resolve_target: None,
+                    ops: *ops,
+                })
+            })
+            .collect::<Vec<_>>();
+
+        // TODO make sure the attachments actually match; use a map with names
+
+        let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: None,
+            color_attachments: attchs.as_slice(),
+            depth_stencil_attachment: None,
+        });
+
+        Ok(pass)
+    }
+
     pub fn create_bind_groups(
         &self,
         device: &wgpu::Device,
