@@ -560,10 +560,10 @@ fn naga_global_bind_group_entry(
 
     let group = binding.group;
 
-    // NB: this one doesn't set shader stage visibility, must be done by the caller
+    //
     let mut entry = wgpu::BindGroupLayoutEntry {
         binding: binding.binding,
-        visibility: wgpu::ShaderStages::empty(),
+        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
         ty: binding_ty,
         count: None,
     };
@@ -619,6 +619,14 @@ fn module_bind_groups(
         prev_group = Some(group);
     }
 
+    let desc = wgpu::BindGroupLayoutDescriptor {
+        label: None,
+        entries: &entries,
+    };
+
+    let layout = device.create_bind_group_layout(&desc);
+    bind_group_layouts.push(layout);
+
     Ok(BindGroups {
         bindings,
         layouts: bind_group_layouts,
@@ -647,8 +655,10 @@ impl NodeInterface {
         let mut bind_groups = module_bind_groups(device, module)?;
 
         bind_groups.bindings.values_mut().for_each(|(_, entry)| {
-            entry.visibility |= wgpu::ShaderStages::VERTEX_FRAGMENT
+            entry.visibility = wgpu::ShaderStages::VERTEX_FRAGMENT
         });
+
+        println!("bind groups: {bind_groups:#?}");
 
         Ok(Self {
             vert_inputs,
@@ -735,6 +745,8 @@ pub fn graphics_node<'a>(
                 bind_group_layouts: layout_refs.as_slice(),
                 push_constant_ranges: &[],
             };
+
+            println!("pipeline layout: {desc:#?}");
 
             Some(device.create_pipeline_layout(&desc))
         }
