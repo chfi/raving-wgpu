@@ -9,11 +9,13 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use anyhow::{Context, Result};
 use wgpu::ShaderLocation;
 
+#[derive(Debug)]
 pub struct NodeDesc {
     shader: wgpu::ShaderModule,
     //
 }
 
+#[derive(Debug)]
 struct VertexInputs {
     // location -> name
     attribute_names: Vec<String>,
@@ -21,11 +23,13 @@ struct VertexInputs {
     attribute_types: Vec<naga::TypeInner>,
 }
 
+#[derive(Debug)]
 struct FragmentOutputs {
     attch_names: Vec<String>,
     attch_types: Vec<naga::TypeInner>,
 }
 
+#[derive(Debug)]
 struct BindGroups {
     // string -> (group id, bind group entry)
     bindings: BTreeMap<String, (u32, wgpu::BindGroupLayoutEntry)>,
@@ -350,21 +354,36 @@ fn module_fragment_outputs(
 
     let mut args: Vec<(u32, String, naga::TypeInner)> = Vec::new();
 
-    for arg in entry_point.function.arguments.iter() {
-        let location = arg.binding.as_ref().and_then(binding_location);
-        let name = arg.name.as_ref();
+    if let Some(result) = &entry_point.function.result {
+        let ty = module.types.get_handle(result.ty)?;
 
-        let ty = module.types.get_handle(arg.ty)?;
+        match &ty.inner {
+            naga::TypeInner::Struct { members, .. } => {
+                for member in members.iter() {
+                    let name = member
+                        .name
+                        .as_ref()
+                        .map(|s| s.as_str())
+                        .unwrap_or("<MISSING>");
 
-        if let Some((location, name)) = location.zip(name) {
-            if !valid_shader_io_type(&ty.inner) {
-                anyhow::bail!(
-                    "Unsupported fragment attachment type: {:?}",
-                    ty.inner
-                );
+                    let inner_ty =
+                        module.types.get_handle(member.ty)?.inner.clone();
+
+                    if let Some(naga::Binding::Location { location, .. }) =
+                        &member.binding
+                    {
+                        args.push((*location, name.to_string(), inner_ty));
+                    } else {
+                        anyhow::bail!(
+                            "Incompatible fragment output binding: `{name}` {:?}",
+                            &member.binding
+                        );
+                    }
+                }
             }
-
-            args.push((location, name.to_string(), ty.inner.clone()));
+            other => {
+                anyhow::bail!("Incompatible fragment output type: {other:?}");
+            }
         }
     }
 
@@ -622,6 +641,8 @@ impl NodeInterface {
     ) -> Result<Self> {
         let vert_inputs = module_vertex_inputs(module, vert_entry)?;
         let frag_outputs = module_fragment_outputs(module, frag_entry)?;
+
+        println!("frag_outputs: {frag_outputs:#?}");
 
         let mut bind_groups = module_bind_groups(device, module)?;
 
