@@ -401,6 +401,7 @@ fn module_fragment_outputs(
 fn naga_global_bind_group_entry(
     module: &naga::Module,
     var: &naga::GlobalVariable,
+    has_dynamic_offset: bool,
 ) -> Result<Option<(String, u32, wgpu::BindGroupLayoutEntry)>> {
     // let binding = var.binding.as_ref();
     // let name = var.name.as_ref();
@@ -445,7 +446,7 @@ fn naga_global_bind_group_entry(
             // min_binding_size field
             let ty = wgpu::BindingType::Buffer {
                 ty: buffer_ty,
-                has_dynamic_offset: false,
+                has_dynamic_offset,
                 min_binding_size: None,
             };
 
@@ -467,7 +468,7 @@ fn naga_global_bind_group_entry(
 
             let ty = wgpu::BindingType::Buffer {
                 ty: buffer_ty,
-                has_dynamic_offset: false,
+                has_dynamic_offset,
                 min_binding_size: None,
             };
 
@@ -574,6 +575,7 @@ fn naga_global_bind_group_entry(
 fn module_bind_groups(
     device: &wgpu::Device,
     module: &naga::Module,
+    dynamic_bindings: HashSet<&'_ str>,
 ) -> Result<BindGroups> {
     let mut bindings: BTreeMap<String, (u32, wgpu::BindGroupLayoutEntry)> =
         BTreeMap::default();
@@ -583,7 +585,11 @@ fn module_bind_groups(
         let binding = var.binding.as_ref();
         let name = var.name.as_ref();
 
-        match naga_global_bind_group_entry(module, var)? {
+        let has_dynamic_offset = name
+            .map(|n| dynamic_bindings.contains(n.as_str()))
+            .unwrap_or(false);
+
+        match naga_global_bind_group_entry(module, var, has_dynamic_offset)? {
             None => continue,
             Some((name, group, entry)) => {
                 bindings.insert(name, (group, entry));
@@ -641,18 +647,21 @@ pub struct NodeInterface {
 }
 
 impl NodeInterface {
-    fn graphics(
+    fn graphics<'a>(
         device: &wgpu::Device,
         module: &naga::Module,
         vert_entry: &str,
         frag_entry: &str,
+        dynamic_binding_vars: impl IntoIterator<Item = &'a str>,
     ) -> Result<Self> {
         let vert_inputs = module_vertex_inputs(module, vert_entry)?;
         let frag_outputs = module_fragment_outputs(module, frag_entry)?;
 
         println!("frag_outputs: {frag_outputs:#?}");
 
-        let mut bind_groups = module_bind_groups(device, module)?;
+        let dyn_bindings = dynamic_binding_vars.into_iter().collect();
+
+        let mut bind_groups = module_bind_groups(device, module, dyn_bindings)?;
 
         bind_groups.bindings.values_mut().for_each(|(_, entry)| {
             entry.visibility = wgpu::ShaderStages::VERTEX_FRAGMENT
@@ -712,12 +721,14 @@ pub struct GraphicsNode {
     pub pipeline: wgpu::RenderPipeline,
 }
 
-pub fn graphics_node<'a>(
+pub fn graphics_node<'a, 'b>(
     device: &wgpu::Device,
 
     shader_src: &str,
     vert_entry: &str,
     frag_entry: &str,
+
+    dynamic_binding_vars: impl IntoIterator<Item = &'b str>,
 
     primitive: wgpu::PrimitiveState,
     depth_stencil: Option<wgpu::DepthStencilState>,
@@ -730,8 +741,13 @@ pub fn graphics_node<'a>(
 ) -> Result<GraphicsNode> {
     let naga_module = naga::front::wgsl::parse_str(shader_src)?;
 
-    let interface =
-        NodeInterface::graphics(device, &naga_module, vert_entry, frag_entry)?;
+    let interface = NodeInterface::graphics(
+        device,
+        &naga_module,
+        vert_entry,
+        frag_entry,
+        dynamic_binding_vars,
+    )?;
 
     let pipeline_layout = {
         let layout_refs =
