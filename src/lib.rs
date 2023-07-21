@@ -23,6 +23,9 @@ pub mod util;
 
 pub use graph::*;
 
+pub use egui;
+pub use wgpu;
+
 pub async fn initialize_no_window(
 ) -> anyhow::Result<(winit::event_loop::EventLoop<()>, State)> {
     let event_loop = EventLoop::new();

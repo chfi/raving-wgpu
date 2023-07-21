@@ -8,8 +8,6 @@ use std::sync::Arc;
 
 use crate::{State, WindowState};
 
-pub use egui;
-
 pub struct EguiCtx {
     ctx: egui::Context,
 
