@@ -15,7 +15,7 @@ egui-wgpu = { version = "0.22" }
 
 lyon = "1.0"
 
-naga = { version = "0.12", features = ["clone", "spv-in", "glsl-in", "spv-out"] }
+naga = { version = "0.12", features = ["clone", "spv-in", "glsl-in", "spv-out", "dot-out"] }
 
 crossbeam = "0.8"
 parking_lot = "0.11.1"
