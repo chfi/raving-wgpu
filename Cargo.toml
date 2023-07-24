@@ -42,9 +42,7 @@ egui-winit = { version = "0.22" }
 wgpu = { version = "0.16", features = ["spirv", "expose-ids"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-# web-sys = { version = "0.3", features = [
-
-# ]}
+web-sys = { version = "0.3" }
 wgpu = { version = "0.16", features = ["spirv", "webgl", "expose-ids"] }
 egui-winit = { version = "0.22", default-features = false }
 
