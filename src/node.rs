@@ -701,9 +701,6 @@ fn module_bind_groups(
 
     let mut entries = Vec::new();
 
-    use web_sys::console;
-    console::log_1(&"creating bind group layouts".into());
-
     for (group, entry) in sorted_bindings {
         if prev_group.is_some_and(|p| p != group) {
             let desc = wgpu::BindGroupLayoutDescriptor {
@@ -721,7 +718,6 @@ fn module_bind_groups(
 
         prev_group = Some(group);
     }
-    console::log_1(&"creating the last bind group layout".into());
 
     let desc = wgpu::BindGroupLayoutDescriptor {
         label: None,
@@ -729,7 +725,6 @@ fn module_bind_groups(
     };
     let txt = format!("{desc:?}");
 
-    console::log_1(&txt.into());
     let layout = device.create_bind_group_layout(&desc);
     bind_group_layouts.push(layout);
 
@@ -754,27 +749,19 @@ impl NodeInterface {
         frag_entry: &str,
         dynamic_binding_vars: impl IntoIterator<Item = &'a str>,
     ) -> Result<Self> {
-        use web_sys::console;
         let naga_code = format!("{module:#?}");
 
-        console::log_1(&naga_code.into());
         let naga_dot = naga::back::dot::write(
             module,
             None,
             naga::back::dot::Options { cfg_only: false },
         )?;
-        console::log_1(&naga_dot.into());
 
-        console::log_1(&"vert_inputs".into());
         let vert_inputs = module_vertex_inputs(module, vert_entry)?;
-        console::log_1(&"frag_outputs".into());
         let frag_outputs = module_fragment_outputs(module, frag_entry)?;
-
-        println!("frag_outputs: {frag_outputs:#?}");
 
         let dyn_bindings = dynamic_binding_vars.into_iter().collect();
 
-        console::log_1(&"bind_groups".into());
         let mut bind_groups = module_bind_groups(
             device,
             module,
@@ -782,14 +769,10 @@ impl NodeInterface {
             frag_entry,
             dyn_bindings,
         )?;
-        console::log_1(&"???okay".into());
 
         bind_groups.bindings.values_mut().for_each(|(_, entry)| {
             entry.visibility = wgpu::ShaderStages::VERTEX_FRAGMENT
         });
-        console::log_1(&"okay".into());
-
-        println!("bind groups: {bind_groups:#?}");
 
         Ok(Self {
             vert_inputs,
@@ -861,11 +844,8 @@ pub fn graphics_node<'a, 'b>(
     >,
     fragment_attchs: impl IntoIterator<Item = (&'a str, wgpu::ColorTargetState)>,
 ) -> Result<GraphicsNode> {
-    use web_sys::console;
-    console::log_1(&"graphics_node()".into());
     let naga_module = naga::front::wgsl::parse_str(shader_src)?;
 
-    console::log_1(&"interface".into());
     let interface = NodeInterface::graphics(
         device,
         &naga_module,
@@ -874,7 +854,6 @@ pub fn graphics_node<'a, 'b>(
         dynamic_binding_vars,
     )?;
 
-    console::log_1(&"pipeline_layout".into());
     let pipeline_layout = {
         let layout_refs =
             interface.bind_groups.layouts.iter().collect::<Vec<_>>();
@@ -894,7 +873,6 @@ pub fn graphics_node<'a, 'b>(
         }
     };
 
-    console::log_1(&"shader module".into());
     // TODO need to pass some more metadata (shader source path/file name) for the labels
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: None,
@@ -988,43 +966,3 @@ fn module_entry_point<'a>(
         .find(|ep| ep.name == entry_point)
         .with_context(|| format!("Entry point `{entry_point}` not found"))
 }
-
-pub mod graphics {
-
-    pub struct VertexShader {
-        pub shader_module: wgpu::ShaderModule,
-        pub entry_point: naga::EntryPoint,
-    }
-    //
-}
-
-pub mod compute {
-    //
-}
-
-/*
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    use anyhow::Result;
-
-    #[test]
-    fn test_wgsl() -> Result<()> {
-        //
-        // let shader_src = include_str!("../shaders/test.wgsl");
-        let shader_src = include_str!("../shaders/test2.wgsl");
-        let naga_mod = naga::front::wgsl::parse_str(shader_src)?;
-
-        println!("{:#?}", naga_mod);
-
-        println!("//////////////////////");
-
-        let interface =
-            NodeInterface::graphics(&naga_mod, "vs_main", "fs_main")?;
-
-        // todo!();
-        Ok(())
-    }
-}
-*/
