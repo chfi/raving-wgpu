@@ -76,6 +76,87 @@ pub struct State {
 }
 
 impl State {
+    #[cfg(target_arch = "wasm32")]
+    pub async fn new_for_canvas(
+        canvas: web_sys::HtmlCanvasElement,
+    ) -> Result<Self, wasm_bindgen::JsValue> {
+        use wasm_bindgen::prelude::*;
+        //
+        let backends = wgpu::util::backend_bits_from_env()
+            .unwrap_or(wgpu::Backends::all());
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends,
+            dx12_shader_compiler: Default::default(),
+        });
+
+        let surface =
+            instance.create_surface_from_canvas(canvas).map_err(|err| {
+                JsValue::from(&format!("Error creating surface: {err:?}"))
+            })?;
+
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::default(),
+                compatible_surface: Some(&surface),
+                force_fallback_adapter: false,
+            })
+            .await
+            .ok_or(JsValue::from(format!(
+                "Could not find compatible adapter"
+            )))?;
+
+        let surface_format = surface.get_capabilities(&adapter).formats[0];
+
+        let allowed_limits = adapter.limits();
+
+        let (device, queue) = adapter
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    features: wgpu::Features::empty(),
+                    limits: if cfg!(target_arch = "wasm32") {
+                        wgpu::Limits::downlevel_webgl2_defaults()
+                    } else {
+                        wgpu::Limits {
+                            max_push_constant_size: allowed_limits
+                                .max_push_constant_size,
+                            ..wgpu::Limits::default()
+                        }
+                    },
+                    label: None,
+                },
+                None,
+            )
+            .await
+            .map_err(|err| {
+                JsValue::from(format!("Could not find create device: {err:?}"))
+            })?;
+
+        /*
+        let size = window.inner_size();
+
+        let config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format: surface_format,
+            width: size.width,
+            height: size.height,
+            present_mode: wgpu::PresentMode::Fifo,
+            alpha_mode: wgpu::CompositeAlphaMode::Auto,
+            view_formats: vec![],
+        };
+
+        surface.configure(&device, &config);
+        */
+
+        let state = Self {
+            instance,
+            device,
+            queue,
+            adapter,
+        };
+
+        Ok(state)
+    }
+
     // #[cfg(target = "wasm32-unknown-unknown")]
     #[cfg(target_arch = "wasm32")]
     pub async fn new_web() -> Result<Self, wasm_bindgen::JsValue> {
