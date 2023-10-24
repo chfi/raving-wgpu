@@ -115,6 +115,7 @@ impl State {
                     features: wgpu::Features::empty(),
                     limits: if cfg!(target_arch = "wasm32") {
                         wgpu::Limits::downlevel_webgl2_defaults()
+                            .using_resolution(allowed_limits)
                     } else {
                         wgpu::Limits {
                             max_push_constant_size: allowed_limits
